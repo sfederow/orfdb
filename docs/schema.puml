@@ -1,0 +1,252 @@
+@startuml
+!define ENTITY class
+!define PRIMARY_KEY --
+
+skinparam class {
+    BackgroundColor White
+    BorderColor Black
+    ArrowColor Black
+}
+
+' Main tables
+entity "Assembly" as assembly {
+    *id : INTEGER <<PK>>
+    --
+    genbank_accession : VARCHAR(200)
+    refseq_accession : VARCHAR(100)
+    ucsc_style_name : VARCHAR(50)
+    sequence_role : VARCHAR(200)
+    assembly_unit : VARCHAR(200)
+    assigned_molecule : VARCHAR(200)
+    assigned_molecule_location : VARCHAR(200)
+    sequence_length : INTEGER
+    genome_accession : VARCHAR(200)
+    attrs : JSON
+}
+
+entity "SequenceRegion" as seq_region {
+    *id : INTEGER <<PK>>
+    --
+    assembly_id : INTEGER <<FK>>
+    start : INTEGER
+    end : INTEGER
+    strand : VARCHAR(1)
+    type : VARCHAR(30)
+}
+
+entity "Gene" as gene {
+    *id : INTEGER <<PK,FK>>
+    --
+    hgnc_id : VARCHAR(30)
+    hgnc_name : VARCHAR(30)
+    ensembl_id : VARCHAR(30)
+    refseq_id : VARCHAR(30)
+    chess_id : VARCHAR(30)
+    velia_id : VARCHAR(30)
+    gene_type : VARCHAR(200)
+    long_name : VARCHAR(100)
+    attrs : JSON
+}
+
+entity "Transcript" as transcript {
+    *id : INTEGER <<PK>>
+    --
+    gene_id : INTEGER <<FK>>
+    block_sizes : TEXT
+    chrom_starts : TEXT
+    transcript_idx : VARCHAR(130)
+    transcript_idx_str : TEXT
+    ensembl_id : VARCHAR(30)
+    refseq_id : VARCHAR(30)
+    chess_id : VARCHAR(30)
+    velia_id : VARCHAR(30)
+    support_level : TEXT
+    transcript_type : TEXT
+    attrs : JSON
+}
+
+entity "Exon" as exon {
+    *id : INTEGER <<PK,FK>>
+    --
+    ensembl_id : VARCHAR(30)
+    refseq_id : VARCHAR(30)
+    chess_id : VARCHAR(30)
+    velia_id : VARCHAR(30)
+    attrs : JSON
+}
+
+entity "UtrThree" as utr3 {
+    *id : INTEGER <<PK,FK>>
+    --
+    ensembl_id : VARCHAR(30)
+    refseq_id : VARCHAR(30)
+    chess_id : VARCHAR(30)
+    velia_id : VARCHAR(30)
+    attrs : JSON
+}
+
+entity "UtrFive" as utr5 {
+    *id : INTEGER <<PK,FK>>
+    --
+    ensembl_id : VARCHAR(30)
+    refseq_id : VARCHAR(30)
+    chess_id : VARCHAR(30)
+    velia_id : VARCHAR(30)
+    attrs : JSON
+}
+
+entity "Cds" as cds {
+    *id : INTEGER <<PK,FK>>
+    --
+    ensembl_id : VARCHAR(60)
+    refseq_id : VARCHAR(60)
+    chess_id : VARCHAR(60)
+    openprot_id : VARCHAR(60)
+    velia_id : TEXT
+    ccds_id : VARCHAR(60)
+    ensembl_protein_id : VARCHAR(30)
+    refseq_protein_id : VARCHAR(30)
+    attrs : JSON
+}
+
+entity "Orf" as orf {
+    *id : INTEGER <<PK>>
+    --
+    assembly_id : INTEGER <<FK>>
+    block_sizes : TEXT
+    chrom_starts : TEXT
+    phases : TEXT
+    reading_frames : TEXT
+    orf_idx : VARCHAR(130)
+    orf_idx_str : TEXT
+    secondary_orf_id : TEXT
+    aa_seq : TEXT
+    nt_seq : TEXT
+    ensembl_protein_id : VARCHAR(30)
+    refseq_protein_id : VARCHAR(30)
+    uniprot_id : VARCHAR(30)
+    attrs : JSON
+    vtx_id : TEXT
+}
+
+entity "Dataset" as dataset {
+    *id : INTEGER <<PK>>
+    --
+    name : VARCHAR
+    description : VARCHAR
+    type : VARCHAR(40)
+    attrs : JSON
+}
+
+' Junction tables
+entity "TranscriptUtrFive" as tx_utr5 {
+    *id : INTEGER <<PK>>
+    --
+    transcript_id : INTEGER <<FK>>
+    utr_five_id : INTEGER <<FK>>
+    attrs : JSON
+}
+
+entity "TranscriptUtrThree" as tx_utr3 {
+    *id : INTEGER <<PK>>
+    --
+    transcript_id : INTEGER <<FK>>
+    utr_three_id : INTEGER <<FK>>
+    attrs : JSON
+}
+
+entity "TranscriptExon" as tx_exon {
+    *id : INTEGER <<PK>>
+    --
+    transcript_id : INTEGER <<FK>>
+    exon_id : INTEGER <<FK>>
+    exon_number : INTEGER
+    attrs : JSON
+}
+
+entity "TranscriptOrf" as tx_orf {
+    *transcript_id : INTEGER <<PK,FK>>
+    *orf_id : INTEGER <<PK,FK>>
+    --
+    evidence_tag : VARCHAR
+    attrs : JSON
+}
+
+entity "ExonCds" as exon_cds {
+    *exon_id : INTEGER <<PK,FK>>
+    *cds_id : INTEGER <<PK,FK>>
+    --
+    attrs : JSON
+}
+
+entity "CdsOrf" as cds_orf {
+    *cds_id : INTEGER <<PK,FK>>
+    *orf_id : INTEGER <<PK,FK>>
+    --
+    cds_number : INTEGER
+    phase : INTEGER
+    reading_frame : INTEGER
+    attrs : JSON
+}
+
+' Cross-reference tables
+entity "TranscriptXref" as tx_xref {
+    *id : INTEGER <<PK>>
+    --
+    transcript_id : INTEGER <<FK>>
+    xref : VARCHAR
+    type : VARCHAR(30)
+    transcript_dataset_id : INTEGER <<FK>>
+    xref_dataset_id : INTEGER <<FK>>
+    attrs : JSON
+}
+
+entity "SequenceRegionXref" as seq_xref {
+    *id : INTEGER <<PK>>
+    --
+    sequence_region_id : INTEGER <<FK>>
+    xref : VARCHAR
+    type : VARCHAR(30)
+    sequence_region_dataset_id : INTEGER <<FK>>
+    xref_dataset_id : INTEGER <<FK>>
+    attrs : JSON
+}
+
+entity "ProteinXref" as prot_xref {
+    *id : INTEGER <<PK>>
+    --
+    protein_id : INTEGER <<FK>>
+    xref : VARCHAR
+    type : VARCHAR(30)
+    protein_dataset_id : INTEGER <<FK>>
+    xref_dataset_id : INTEGER <<FK>>
+    attrs : JSON
+}
+
+' Relationships
+assembly ||--o{ seq_region
+seq_region <|-- gene
+seq_region <|-- exon
+seq_region <|-- utr3
+seq_region <|-- utr5
+seq_region <|-- cds
+gene ||--o{ transcript
+transcript ||--o{ tx_exon
+tx_exon }o--|| exon
+transcript ||--o{ tx_utr5
+tx_utr5 }o--|| utr5
+transcript ||--o{ tx_utr3
+tx_utr3 }o--|| utr3
+transcript ||--o{ tx_orf
+tx_orf }o--|| orf
+exon ||--o{ exon_cds
+exon_cds }o--|| cds
+cds ||--o{ cds_orf
+cds_orf }o--|| orf
+transcript ||--o{ tx_xref
+seq_region ||--o{ seq_xref
+dataset ||--o{ tx_xref
+dataset ||--o{ seq_xref
+dataset ||--o{ prot_xref
+
+@enduml
