@@ -79,33 +79,24 @@ def load_db(drop_all):
     logging.info(f'Loading {settings.db_connection_string}')
 
     logging.info('Loading GENCODE')
-    #load_gencode_gff(session, settings.gencode_directory,
-    #                 settings.gencode_version, settings.genomes_directory)
-    
-    logging.info('Loading Uniprot')
-    #annotation_loading.load_uniprot(session, settings.uniprot_directory)
-    
+    load_gencode_gff(session, settings.gencode_directory,
+                     settings.gencode_version, settings.genomes_directory)
+
     logging.info('Loading RefSeq')
-    #load_refseq_gff(session, settings.refseq_directory)
+    load_refseq_gff(session, settings.refseq_directory)
 
     logging.info('Loading CHESS')
-    #load_chess_gff(session, settings.chess_directory)
+    load_chess_gff(session, settings.chess_directory)
 
-    logging.info('Loading Openprot')
+    logging.info('Loading Uniprot')
+    #annotation_loading.load_uniprot(session, settings.uniprot_directory)
+
+    #logging.info('Loading Openprot')
     #load_openprot_bed(session, settings.openprot_directory)
     
-    logging.info('Updating RiboSeq CDS')
+    #logging.info('Updating RiboSeq CDS')
     #annotation_loading.update_riboseq_cds(session, settings.gencode_directory,
     #                                     'v42')
-
-    logging.info('Loading Velia Phase 1 to 5 ORFs')
-    #load_psl_phases_1to5(session, settings.velia_directory)
-
-    logging.info('Loading Velia Phase 6 ORFs')
-    #load_psl_phase_6(session, settings.velia_directory)
-
-    logging.info('Updating Velia Phase ORFs')
-    #update_psl_phases(session, settings.velia_directory) 
 
     logging.info('Updating ensembl <-> refseq gene mappings')
     #annotation_updates.update_ensembl_entrez_gene_mapping(
@@ -433,95 +424,8 @@ def load_chess_gff(session, chess_dir):
     annotation_loading.load_chess_cds(session, cds_gff_df)
 
 
-def load_openprot_bed(session, openprot_dir):
-    """Load OpenProt annotations from BED files.
-
-    Args:
-        session: SQLAlchemy session object
-        openprot_dir (Path): Directory containing OpenProt files
-    """
-    openprot_bed_phased = openprot_dir.joinpath(
-        'v1.6',
-        'human-openprot-r1_6-refprots+altprots+isoforms-_phased.bed'
-    )
-    
-    bed_df = pd.read_csv(openprot_bed_phased, sep='\t', index_col=0)
-
-    # Create dataset
-    openprot_dataset = session.upsert(
-        base.Dataset,
-        name="openprot",
-        description="Openprot database",
-        type="dataset",
-        attrs={"version": "v1.6"}
-    )
-
-    # Load OpenProt components
-    logging.info('Loading Openprot CDS')
-    annotation_loading.load_openprot_cds(session, bed_df)
-
-    logging.info('Loading Openprot ORFs')
-    cds_orf_map = annotation_loading.load_openprot_orfs(session, bed_df)
-    
-    logging.info('Loading Openprot CDS <-> ORF mappings')
-    annotation_loading.load_refseq_orf_cds(session, cds_orf_map)
 
 
-def load_psl_phases_1to5(session, velia_dir):
-    """Load Phase 1-5 PSL data.
-
-    Args:
-        session: SQLAlchemy session object
-        velia_dir (Path): Directory containing Phase 1-5 files
-    """
-    psl_df, phase_df = orf_utils.etl_phase1to5_psl(session, velia_dir)
-
-    logging.info('Loading Velia CDS from PSL')
-    annotation_loading.load_psl_phase_cds(session, psl_df, 'velia')
-
-    logging.info('Loading Velia phase ORFs from PSL')
-    annotation_loading.load_psl_phase_orfs_legacy(
-        session, psl_df, phase_df, 'velia')
-    
-    logging.info('Loading Velia phase proteins from phase df')
-    annotation_loading.load_psl_phase_proteins(session, phase_df, 'velia')
-
-
-def load_psl_phase_6(session, velia_dir):
-    """Load Phase 6 PSL data.
-
-    Args:
-        session: SQLAlchemy session object
-        velia_dir (Path): Directory containing Phase 6 files
-    """
-    psl_df, phase_df = orf_utils.etl_phase6_psl(session, velia_dir)
-
-    logging.info('Loading Velia CDS from PSL')
-    annotation_loading.load_psl_phase_cds(session, psl_df, 'velia')
-
-    logging.info('Loading Velia phase ORFs from PSL')
-    annotation_loading.load_psl_phase_orfs_legacy(
-        session, psl_df, phase_df, 'velia')
-
-    logging.info('Loading Velia phase proteins from phase df')
-    annotation_loading.load_psl_phase_proteins(session, phase_df, 'velia')
-
-
-def update_psl_phases(session, velia_dir):
-    """Update PSL phase data.
-
-    Args:
-        session: SQLAlchemy session object
-        velia_dir (Path): Directory containing phase data files
-    """
-    psl_phase1to5_df, _ = orf_utils.etl_phase1to5_psl(session, velia_dir)
-    psl_phase6_df, _ = orf_utils.etl_phase6_psl(session, velia_dir)
-
-    logging.info('Updating Velia phase 1 to 5 ORFs from PSL')
-    annotation_loading.update_psl_phase_orfs(session, psl_phase1to5_df)
-
-    logging.info('Updating Velia phase 6 ORFs from PSL')
-    annotation_loading.update_psl_phase_orfs(session, psl_phase6_df)
 
 
 if __name__ == '__main__':
