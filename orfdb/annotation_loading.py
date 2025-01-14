@@ -6,8 +6,9 @@ exons, UTRs, and CDS regions from different data sources.
 """
 
 from Bio.Seq import Seq
-from orfdb.base import *  # Changed from veliadb.base
-from orfdb import util as orf_utils  # Changed from veliadb import util
+from orfdb.base import *  
+from orfdb import base
+from orfdb import util as orf_utils  
 
 import ast
 import gzip
@@ -16,155 +17,269 @@ import logging
 import pandas as pd
 from os.path import basename
 from warnings import warn
+from pathlib import Path
+from sqlalchemy.orm import Session
+from sqlalchemy import select, or_
+from typing import Dict, List, Tuple
 
 
-def load_genome_assembly(session, assembly_df, genome_accession):
-    """Load genome assembly information into database.
+
+def load_genome_assembly(session: Session, assembly_df: pd.DataFrame, assembly_name: str) -> None:
+    """Load genome assembly information into the database.
 
     Args:
-        session: SQLAlchemy session object
-        assembly_df (pd.DataFrame): Genome assembly report dataframe
-        genome_accession (str): Genome assembly accession ID
+        session: SQLAlchemy session
+        assembly_df: DataFrame containing assembly information
+        assembly_name: Name of the assembly
     """
-    assemblies = []
-    for i, row in assembly_df.iterrows():
-        assemblies.append(Assembly(
-            row['GenBank-Accn'],
-            row['RefSeq-Accn'],
-            row['UCSC-style-name'],
-            row['Sequence-Role'],
-            row['Assembly-Unit'],
-            row['Assigned-Molecule'],
-            row['Assigned-Molecule-Location/Type'],
-            row['Sequence-Length'],
-            genome_accession=genome_accession
-        ))
+    # Add unmapped assembly if it doesn't exist
+    stmt = select(base.Assembly).filter_by(genbank_accession='unmapped')
+    unmapped = session.execute(stmt).scalar_one_or_none()
     
-    # Add unmapped assembly entry
-    assemblies.append(Assembly(
-        genbank_accession="unmapped",
-        refseq_accession="unmapped",
-        ucsc_style_name="unmapped",
-        sequence_role="unmapped",
-        assembly_unit="unmapped",
-        assigned_molecule="unmapped",
-        assigned_molecule_location="unmapped",
-        sequence_length=0,
-        genome_accession="unmapped"
-    ))
+    if not unmapped:
+        unmapped = base.Assembly(
+            genbank_accession='unmapped',
+            refseq_accession='unmapped',
+            ucsc_style_name='unmapped',
+            sequence_role='unmapped',
+            assembly_unit='unmapped',
+            assigned_molecule='unmapped',
+            assigned_molecule_location='unmapped',
+            sequence_length=-1,
+            genome_accession='unmapped'
+        )
+        session.add(unmapped)
+        session.commit()
 
-    session.add_all(assemblies)
-    session.commit()
+    # Process each assembly row
+    assemblies_to_add = []
+    for _, row in assembly_df.iterrows():
+        # Check if assembly exists
+        stmt = select(base.Assembly).filter(
+            or_(
+                base.Assembly.genbank_accession == row['GenBank-Accn'],
+                base.Assembly.refseq_accession == row['RefSeq-Accn']
+            )
+        )
+        existing = session.execute(stmt).scalar_one_or_none()
+
+        if existing:
+            # Update existing assembly
+            existing.genbank_accession = row['GenBank-Accn']
+            existing.refseq_accession = row['RefSeq-Accn']
+            existing.ucsc_style_name = row['UCSC-style-name']
+            existing.sequence_role = row['Sequence-Role']
+            existing.assembly_unit = row['Assembly-Unit']
+            existing.assigned_molecule = row['Assigned-Molecule']
+            existing.assigned_molecule_location = row['Assigned-Molecule-Location/Type']
+            existing.sequence_length = int(row['Sequence-Length'])
+            existing.genome_accession = assembly_name
+            existing.attrs = {
+                'sequence_name': row['Sequence-Name'],
+                'relationship': row['Relationship']
+            }
+        else:
+            # Create new assembly
+            assembly = base.Assembly(
+                genbank_accession=row['GenBank-Accn'],
+                refseq_accession=row['RefSeq-Accn'],
+                ucsc_style_name=row['UCSC-style-name'],
+                sequence_role=row['Sequence-Role'],
+                assembly_unit=row['Assembly-Unit'],
+                assigned_molecule=row['Assigned-Molecule'],
+                assigned_molecule_location=row['Assigned-Molecule-Location/Type'],
+                sequence_length=int(row['Sequence-Length']),
+                genome_accession=assembly_name,
+                attrs={
+                    'sequence_name': row['Sequence-Name'],
+                    'relationship': row['Relationship']
+                }
+            )
+            assemblies_to_add.append(assembly)
+
+    # Bulk insert new assemblies
+    if assemblies_to_add:
+        session.bulk_save_objects(assemblies_to_add)
+        session.commit()
+
+    logging.info(f'Added {len(assemblies_to_add)} genome assemblies')
 
 
-def load_gencode_genes(session, gene_gff_df, assembly_ids):
-    """Load genes from GENCODE GFF file.
+def load_gencode_genes(
+    session: Session, 
+    gene_gff_df: pd.DataFrame, 
+    assembly_ids: Dict[str, int]
+) -> None:
+    """Load GENCODE gene annotations into the database.
 
     Args:
-        session: SQLAlchemy session object
-        gene_gff_df (pd.DataFrame): GENCODE GFF dataframe filtered for genes
-        assembly_ids (dict): Mapping of sequence IDs to assembly IDs
+        session: SQLAlchemy session
+        gene_gff_df: DataFrame containing gene annotations
+        assembly_ids: Dictionary mapping chromosome names to assembly IDs
     """
+    # Map assembly IDs to DataFrame
     gene_gff_df['assembly_id'] = gene_gff_df.apply(
-        lambda x: assembly_ids[x.seq_id],
+        lambda x: assembly_ids[x.seqid], 
         axis=1
     )
 
+    # Group by unique columns to handle redundant entries
     unique_cols = ['start', 'end', 'strand', 'assembly_id']
     gene_gff_df.sort_values(by=unique_cols, inplace=True)
-    grouped_gene_gff_df = gene_gff_df.groupby(unique_cols).aggregate(list)
+    
+    # Process attributes before grouping
+    gene_gff_df['attrs'] = gene_gff_df['attributes'].apply(parse_attributes)
+    gene_gff_df['hgnc_id'] = gene_gff_df['attrs'].apply(lambda x: x.get('hgnc_id', ''))
+    gene_gff_df['gene_name'] = gene_gff_df['attrs'].apply(lambda x: x.get('gene_name', ''))
+    gene_gff_df['gene_id'] = gene_gff_df['attrs'].apply(lambda x: x.get('gene_id', ''))
+    gene_gff_df['gene_type'] = gene_gff_df['attrs'].apply(lambda x: x.get('gene_type', ''))
+    
+    grouped_gene_gff_df = gene_gff_df.groupby(unique_cols).agg({
+        'hgnc_id': list,
+        'gene_name': list,
+        'gene_id': list,
+        'gene_type': 'first',
+        'source': list,
+        'attrs': list
+    })
 
-    genes = []
+    # Prepare genes for bulk insert
+    genes_to_add = []
     synonym_dict = {}
 
     for idx, row in grouped_gene_gff_df.iterrows():
-        genes.append(Gene(
-            idx[0], idx[1], idx[2], idx[3],
-            row.hgnc_id[0], row.gene_name[0], row.ID[0],
-            '', '', '', row.gene_type[0], '', {}
-        ))
+        gene = base.Gene(
+            start=idx[0],
+            end=idx[1],
+            strand=idx[2],
+            assembly_id=idx[3],
+            hgnc_id=row.hgnc_id[0],
+            hgnc_name=row.gene_name[0],
+            ensembl_id=row.gene_id[0],
+            refseq_id='',
+            chess_id='',
+            velia_id='',
+            gene_type=row.gene_type,
+            long_name='',
+            attrs={}
+        )
+        genes_to_add.append(gene)
         
+        # Build synonym dictionary for xrefs
         syn_dict = {source: set() for source in row.source}
-
-        for i, ID in enumerate(row.ID):
-            syn_dict[row.source[i]].add(ID)
-
+        for i, gene_id in enumerate(row.gene_id):
+            syn_dict[row.source[i]].add(gene_id)
+        
         syn_dict['HGNC_ID'] = set(row.hgnc_id)
         syn_dict['HGNC_SYMBOL'] = set(row.gene_name)
         synonym_dict[idx] = syn_dict
 
-    # Add unmapped gene entry
-    unmapped_assembly = session.query(Assembly).filter(
-        Assembly.genbank_accession == 'unmapped'
-    ).one()
-    genes.append(Gene(
-        start=-1, end=-1, strand='',
+    # Add unmapped gene
+    stmt = select(base.Assembly).filter_by(genbank_accession='unmapped')
+    unmapped_assembly = session.execute(stmt).scalar_one()
+    
+    genes_to_add.append(base.Gene(
+        start=-1,
+        end=-1,
+        strand='',
         assembly_id=unmapped_assembly.id,
         hgnc_id="unmapped",
         hgnc_name="unmapped",
         ensembl_id="unmapped",
         refseq_id="unmapped",
-        velia_id="unmapped",
         chess_id="unmapped",
-        gene_type="unmapped"
+        velia_id="unmapped",
+        gene_type="unmapped",
+        long_name="",
+        attrs={}
     ))
 
-    session.add_all(genes)
+    # Bulk insert genes
+    session.bulk_save_objects(genes_to_add)
     session.commit()
+    
+    logging.info(f'Added {len(genes_to_add)} GENCODE genes')
 
-    logging.info(f'Added {len(genes)} GENCODE genes')
+    # Get gene IDs for xrefs
+    stmt = select(base.Gene)
 
-    # Add gene cross-references
-    gene_xrefs = []
-    ensembl_vdb_gene_map = {
-        (g.start, g.end, g.strand, g.assembly_id): g.id
-        for g in session.query(Gene).all()
+    gene_map = {
+        (g.start, g.end, g.strand, g.assembly_id): g.id 
+        for g in session.execute(stmt).scalars().all()
     }
-    dataset_ids = {x.name: x.id for x in session.query(Dataset).all()}
 
+    # Get dataset IDs
+    stmt = select(base.Dataset)
+    dataset_ids = {
+        d.name: d.id 
+        for d in session.execute(stmt).scalars().all()
+    }
+
+    # Prepare xrefs for bulk insert
+    xrefs_to_add = []
     for idx, synonym_entries in synonym_dict.items():
         for dataset_name, synonyms in synonym_entries.items():
             for synonym in synonyms:
-                if synonym == '':
+                if not synonym:
                     continue
-                gene_xrefs.append(SequenceRegionXref(
-                    ensembl_vdb_gene_map[idx],
-                    synonym,
-                    'synonym',
-                    dataset_ids['ENSEMBL'],
-                    dataset_ids[dataset_name]
+                xrefs_to_add.append(base.SequenceRegionXref(
+                    sequence_region_id=gene_map[idx],
+                    xref=synonym,
+                    type='synonym',
+                    sequence_region_dataset_id=dataset_ids['ENSEMBL'],
+                    xref_dataset_id=dataset_ids[dataset_name]
                 ))
 
-    session.add_all(gene_xrefs)
+    # Bulk insert xrefs
+    session.bulk_save_objects(xrefs_to_add)
     session.commit()
+    
+    logging.info(f'Added {len(xrefs_to_add)} GENCODE gene synonyms')
 
-    logging.info(f'Added {len(gene_xrefs)} GENCODE gene synonyms')
 
-
-def load_gencode_exons(session, exon_gff_df, assembly_ids):
+def load_gencode_exons(session: Session, exon_gff_df: pd.DataFrame, assembly_ids: Dict[str, int]) -> None:
     """Load exons from GENCODE GFF file.
 
     Args:
         session: SQLAlchemy session object
-        exon_gff_df (pd.DataFrame): GENCODE GFF dataframe filtered for exons
-        assembly_ids (dict): Mapping of sequence IDs to assembly IDs
+        exon_gff_df: GENCODE GFF dataframe filtered for exons
+        assembly_ids: Mapping of sequence IDs to assembly IDs
     """
+    # Map assembly IDs to DataFrame
     exon_gff_df['assembly_id'] = exon_gff_df.apply(
-        lambda x: assembly_ids[x.seq_id],
+        lambda x: assembly_ids[x.seqid],
         axis=1
     )
 
+    # Group by unique columns to handle redundant entries
     unique_cols = ['start', 'end', 'strand', 'assembly_id']
     exon_gff_df.sort_values(by=unique_cols, inplace=True)
-    grouped_exon_gff_df = exon_gff_df.groupby(unique_cols).aggregate(list)
+    
+    # Process attributes before grouping
+    exon_gff_df['attrs'] = exon_gff_df['attributes'].apply(parse_attributes)
+    exon_gff_df['exon_id'] = exon_gff_df['attrs'].apply(lambda x: x.get('exon_id', ''))
+    exon_gff_df['ID'] = exon_gff_df['attrs'].apply(lambda x: x.get('ID', ''))
+    
+    grouped_exon_gff_df = exon_gff_df.groupby(unique_cols).agg({
+        'exon_id': list,
+        'ID': list,
+        'source': list,
+        'attrs': list
+    })
         
     exons = []
     synonym_dict = {}
 
     for idx, row in grouped_exon_gff_df.iterrows():
-        exons.append(Exon(
-            idx[0], idx[1], idx[2], idx[3],
-            row.exon_id[0], '', '', ''
+        exons.append(base.Exon(
+            start=idx[0],
+            end=idx[1],
+            strand=idx[2],
+            assembly_id=idx[3],
+            ensembl_id=row.exon_id[0],
+            refseq_id='',
+            chess_id='',
+            velia_id=''
         ))
 
         syn_dict = {source: set() for source in row.source}
@@ -175,82 +290,123 @@ def load_gencode_exons(session, exon_gff_df, assembly_ids):
 
         synonym_dict[idx] = syn_dict
 
-    session.add_all(exons)
+    # Bulk insert exons
+    session.bulk_save_objects(exons)
     session.commit()
 
     logging.info(f'Added {len(exons)} GENCODE exons')
     
-    exon_xrefs = []
-    ensembl_orf_exon_map = {
+    # Get exon IDs for xrefs
+    stmt = select(base.Exon)
+
+    exon_map = {
         (e.start, e.end, e.strand, e.assembly_id): e.id 
-        for e in session.query(Exon).all()
+        for e in session.execute(stmt).scalars().all()
     }
-    dataset_ids = {x.name: x.id for x in session.query(Dataset).all()}
+
+    # Get dataset IDs
+    stmt = select(base.Dataset)
+    dataset_ids = {
+        d.name: d.id 
+        for d in session.execute(stmt).scalars().all()
+    }
     
+    # Prepare xrefs for bulk insert
+    exon_xrefs = []
     for idx, synonym_entries in synonym_dict.items():
         for dataset_name, synonyms in synonym_entries.items():
             for synonym in synonyms:
-                if synonym == '':
+                if not synonym:
                     continue
-                exon_xrefs.append(SequenceRegionXref(
-                    ensembl_orf_exon_map[idx],
-                    synonym,
-                    'synonym',
-                    dataset_ids['ENSEMBL'],
-                    dataset_ids[dataset_name]
+                exon_xrefs.append(base.SequenceRegionXref(
+                    sequence_region_id=exon_map[idx],
+                    xref=synonym,
+                    type='synonym',
+                    sequence_region_dataset_id=dataset_ids['ENSEMBL'],
+                    xref_dataset_id=dataset_ids[dataset_name]
                 ))
 
-    session.add_all(exon_xrefs)
+    # Bulk insert xrefs
+    session.bulk_save_objects(exon_xrefs)
     session.commit()
 
     logging.info(f'Added {len(exon_xrefs)} GENCODE exon synonyms')
 
 
-def load_gencode_transcripts(session, tx_gff_df, exon_gff_df, gencode_dir,
-                           version, assembly_ids):
+def load_gencode_transcripts(
+    session: Session, 
+    tx_gff_df: pd.DataFrame, 
+    exon_gff_df: pd.DataFrame, 
+    gencode_dir: Path,
+    version: str, 
+    assembly_ids: Dict[str, int]
+) -> Dict[str, List[Tuple[int, int]]]:
     """Load transcripts from GENCODE GFF file.
 
     Args:
         session: SQLAlchemy session object
-        tx_gff_df (pd.DataFrame): GENCODE GFF dataframe filtered for transcripts
-        exon_gff_df (pd.DataFrame): GENCODE GFF dataframe filtered for exons
-        gencode_dir (Path): Path to GENCODE directory
-        version (str): GENCODE version
-        assembly_ids (dict): Mapping of sequence IDs to assembly IDs
+        tx_gff_df: GENCODE GFF dataframe filtered for transcripts
+        exon_gff_df: GENCODE GFF dataframe filtered for exons
+        gencode_dir: Path to GENCODE directory
+        version: GENCODE version
+        assembly_ids: Mapping of sequence IDs to assembly IDs
 
     Returns:
-        dict: Mapping of transcript IDs to exon information
+        Dictionary mapping transcript IDs to exon information
     """
+    # Map assembly IDs
     tx_gff_df['assembly_id'] = tx_gff_df.apply(
-        lambda x: assembly_ids[x.seq_id],
+        lambda x: assembly_ids[x.seqid],
         axis=1
     )
     exon_gff_df['assembly_id'] = exon_gff_df.apply(
-        lambda x: assembly_ids[x.seq_id],
+        lambda x: assembly_ids[x.seqid],
         axis=1
     )
 
+    tx_gff_df['attrs'] = tx_gff_df['attributes'].apply(parse_attributes)
+    tx_gff_df['ID'] = tx_gff_df['attrs'].apply(lambda x: x.get('ID', ''))
+    tx_gff_df['gene_id'] = tx_gff_df['attrs'].apply(lambda x: x.get('gene_id', ''))
+    tx_gff_df['havana_transcript'] = tx_gff_df['attrs'].apply(lambda x: x.get('havana_transcript', ''))
+    tx_gff_df['ccdsid'] = tx_gff_df['attrs'].apply(lambda x: x.get('ccdsid', ''))
+    tx_gff_df['transcript_support_level'] = tx_gff_df['attrs'].apply(lambda x: x.get('transcript_support_level', ''))
+    tx_gff_df['transcript_type'] = tx_gff_df['attrs'].apply(lambda x: x.get('transcript_type', ''))
+    tx_gff_df['tag'] = tx_gff_df['attrs'].apply(lambda x: x.get('tag', ''))
+
+    exon_gff_df['attrs'] = exon_gff_df['attributes'].apply(parse_attributes)
+    exon_gff_df['ID'] = exon_gff_df['attrs'].apply(lambda x: x.get('ID', ''))
+    exon_gff_df['transcript_id'] = exon_gff_df['attrs'].apply(lambda x: x.get('transcript_id', ''))
+    exon_gff_df['exon_number'] = exon_gff_df['attrs'].apply(lambda x: x.get('exon_number', ''))
+
+
+    # Merge transcript and exon data
     merged_df = tx_gff_df.merge(
         exon_gff_df,
-        left_on=('ID', 'seq_id'),
-        right_on=('transcript_id', 'seq_id'),
+        left_on=('ID', 'seqid'),
+        right_on=('transcript_id', 'seqid'),
         suffixes=('_tx', '_ex'),
         how='left'
     )
 
+    # Group by transcript information
     transcript_exon_gff_df = merged_df.groupby(
         ['ID_tx', 'start_tx', 'end_tx', 'strand_tx', 'assembly_id_tx']
     ).aggregate(list)
 
+    # Get existing exon and gene mappings using SQLAlchemy 2.0 style
+    stmt = select(base.Exon)
     ensembl_orf_exon_map = {
         (e.start, e.end, e.strand, e.assembly_id): e.id
-        for e in session.query(Exon).all()
-    }
-    ensembl_orf_gene_map = {
-        g.ensembl_id: g.id
-        for g in session.query(Gene).all()
+        for e in session.execute(stmt).scalars().all()
     }
 
+    stmt = select(base.Gene)
+    ensembl_orf_gene_map = {
+        g.ensembl_id: g.id
+        for g in session.execute(stmt).scalars().all()
+    }
+
+    # Load GENCODE-RefSeq mapping
     gencode_refseq_map = {}
     with gzip.open(
         gencode_dir.joinpath(
@@ -267,9 +423,9 @@ def load_gencode_transcripts(session, tx_gff_df, exon_gff_df, gencode_dir,
     synonym_dict = {}
     existing_entries = []
 
-    unmapped_gene = session.query(Gene).filter(
-        Gene.hgnc_id == 'unmapped'
-    ).one()
+    # Get unmapped gene using SQLAlchemy 2.0 style
+    stmt = select(base.Gene).filter_by(hgnc_id='unmapped')
+    unmapped_gene = session.execute(stmt).scalar_one()
 
     for (transcript_id, start, end, strand, assembly_id), row in \
             transcript_exon_gff_df.iterrows():
@@ -278,7 +434,7 @@ def load_gencode_transcripts(session, tx_gff_df, exon_gff_df, gencode_dir,
         exon_ids = []
 
         try:
-            gene_id = ensembl_orf_gene_map[row.gene_id_tx[0]]
+            gene_id = ensembl_orf_gene_map[row.gene_id[0]]
         except KeyError:
             gene_id = unmapped_gene.id
 
@@ -293,7 +449,7 @@ def load_gencode_transcripts(session, tx_gff_df, exon_gff_df, gencode_dir,
             chrom_starts.append(str(int(row.start_ex[i])))
             block_sizes.append(str(int(row.end_ex[i] - row.start_ex[i])))
             exon_ids.append((
-                row.exon_number_ex[i],
+                row.exon_number[i],
                 ensembl_orf_exon_map[
                     (row.start_ex[i],
                      row.end_ex[i],
@@ -315,26 +471,35 @@ def load_gencode_transcripts(session, tx_gff_df, exon_gff_df, gencode_dir,
         if transcript_idx in existing_entries:
             synonym_dict[transcript_idx]['ENSEMBL'].update([transcript_id])
             synonym_dict[transcript_idx]['HAVANA'].update(
-                row.havana_transcript_tx
+                row.havana_transcript
             )
-            synonym_dict[transcript_idx]['CCDS'].update(row.ccdsid_tx)
+            synonym_dict[transcript_idx]['CCDS'].update(row.ccdsid)
         else:
             existing_entries.append(transcript_idx)
             synonym_dict[transcript_idx] = {}
             synonym_dict[transcript_idx]['ENSEMBL'] = set([transcript_id])
             synonym_dict[transcript_idx]['HAVANA'] = set(
-                row.havana_transcript_tx
+                row.havana_transcript
             )
-            synonym_dict[transcript_idx]['CCDS'] = set(row.ccdsid_tx)
+            synonym_dict[transcript_idx]['CCDS'] = set(row.ccdsid)
 
-            transcripts.append(Transcript(
-                start, end, strand, assembly_id,
-                block_sizes, chrom_starts,
-                transcript_idx, transcript_idx_str,
-                gene_id, transcript_id, refseq_id, '', '',
-                row.transcript_support_level_tx[0],
-                row.transcript_type_tx[0],
-                attrs={'tag': row.tag_tx[0]}
+            transcripts.append(base.Transcript(
+                start=start,
+                end=end,
+                strand=strand,
+                assembly_id=assembly_id,
+                block_sizes=block_sizes,
+                chrom_starts=chrom_starts,
+                transcript_idx=transcript_idx,
+                transcript_idx_str=transcript_idx_str,
+                gene_id=gene_id,
+                ensembl_id=transcript_id,
+                refseq_id=refseq_id,
+                chess_id='',
+                velia_id='',
+                support_level=row.transcript_support_level[0],
+                transcript_type=row.transcript_type[0],
+                attrs={'tag': row.tag[0]}
             ))
 
             transcript_exon_map[transcript_idx] = []
@@ -342,61 +507,98 @@ def load_gencode_transcripts(session, tx_gff_df, exon_gff_df, gencode_dir,
         for exon_num, exon_id in exon_ids:
             transcript_exon_map[transcript_idx].append((exon_num, exon_id))
 
-    session.add_all(transcripts)
+    # Bulk insert transcripts
+    session.bulk_save_objects(transcripts)
     session.commit()
 
     logging.info(f'Added {len(transcripts)} GENCODE transcripts')
 
-    transcript_xrefs = []
-    ensembl_orf_tx_map = {
+    # Get transcript IDs for xrefs using SQLAlchemy 2.0 style
+    stmt = select(base.Transcript)
+    transcript_map = {
         t.transcript_idx: t.id
-        for t in session.query(Transcript).all()
+        for t in session.execute(stmt).scalars().all()
     }
-    dataset_ids = {x.name: x.id for x in session.query(Dataset).all()}
 
+    # Get dataset IDs using SQLAlchemy 2.0 style
+    stmt = select(base.Dataset)
+    dataset_ids = {
+        d.name: d.id
+        for d in session.execute(stmt).scalars().all()
+    }
+
+    # Prepare xrefs for bulk insert
+    transcript_xrefs = []
     for idx, synonym_entries in synonym_dict.items():
         for dataset_name, synonyms in synonym_entries.items():
             for synonym in synonyms:
-                if synonym == '':
+                if not synonym:
                     continue
-                transcript_xrefs.append(TranscriptXref(
-                    ensembl_orf_tx_map[idx],
-                    synonym,
-                    'synonym',
-                    dataset_ids['ENSEMBL'],
-                    dataset_ids[dataset_name]
+                transcript_xrefs.append(base.SequenceRegionXref(
+                    sequence_region_id=transcript_map[idx],
+                    xref=synonym,
+                    type='synonym',
+                    sequence_region_dataset_id=dataset_ids['ENSEMBL'],
+                    xref_dataset_id=dataset_ids[dataset_name]
                 ))
 
-    session.add_all(transcript_xrefs)
+    # Bulk insert xrefs
+    session.bulk_save_objects(transcript_xrefs)
     session.commit()
 
-    logging.info(f'Added {len(transcript_xrefs)} GENCODE transcript xrefs')
+    logging.info(f'Added {len(transcript_xrefs)} GENCODE transcript synonyms')
 
     return transcript_exon_map
 
 
-def load_gencode_utr(session, utr_gff_df, assembly_ids, utr_class):
-    """Load utrs from GENCODE gff
+def load_gencode_utr(
+    session: Session, 
+    utr_gff_df: pd.DataFrame, 
+    assembly_ids: Dict[str, int], 
+    utr_class
+) -> None:
+    """Load UTRs from GENCODE GFF file.
 
     Args:
-        session (sqlalchemy.Session): An open database connection object
-        utr_gff_df (pandas.DataFrame): Subset of the gencode gff with utr records
-        assembly_ids (dict): Mapping of GENCODE 'seq_id' to internal database ids
+        session: SQLAlchemy session object
+        utr_gff_df: Subset of the GENCODE GFF with UTR records
+        assembly_ids: Mapping of GENCODE 'seqid' to internal database IDs
+        utr_class: The UTR class to use (either UTR3 or UTR5)
     """
+    # Map assembly IDs to DataFrame
+    utr_gff_df['assembly_id'] = utr_gff_df.apply(
+        lambda x: assembly_ids[x.seqid], 
+        axis=1
+    )
 
-    utr_gff_df['assembly_id'] = utr_gff_df.apply(lambda x: assembly_ids[x.seq_id], axis=1)
-
+    # Group by unique columns to handle redundant entries
     unique_cols = ['start', 'end', 'strand', 'assembly_id']
     utr_gff_df.sort_values(by=unique_cols, inplace=True)
-    grouped_utr_gff_df = utr_gff_df.groupby(unique_cols).aggregate(list)
+    
+    # Process attributes before grouping
+    utr_gff_df['attrs'] = utr_gff_df['attributes'].apply(parse_attributes)
+    utr_gff_df['ID'] = utr_gff_df['attrs'].apply(lambda x: x.get('ID', ''))
+    
+    grouped_utr_gff_df = utr_gff_df.groupby(unique_cols).agg({
+        'ID': list,
+        'source': list,
+        'attrs': list
+    })
         
     utrs = []
     synonym_dict = {}
 
     for idx, row in grouped_utr_gff_df.iterrows():
-
-        utrs.append(utr_class(idx[0], idx[1], idx[2], idx[3],
-                              row.ID[0], '', '', ''))
+        utrs.append(utr_class(
+            start=idx[0],
+            end=idx[1],
+            strand=idx[2],
+            assembly_id=idx[3],
+            ensembl_id=row.ID[0],
+            refseq_id='',
+            chess_id='',
+            velia_id=''
+        ))
         
         syn_dict = {source: set() for source in row.source}
 
@@ -405,76 +607,164 @@ def load_gencode_utr(session, utr_gff_df, assembly_ids, utr_class):
 
         synonym_dict[idx] = syn_dict
 
-
-    session.add_all(utrs)
+    # Bulk insert UTRs
+    session.bulk_save_objects(utrs)
     session.commit()
 
     logging.info(f'Added {len(utrs)} GENCODE UTRs')
     
-    utr_xrefs = []
+    # Get UTR IDs for xrefs
+    stmt = select(utr_class)
+    utr_map = {
+        (u.start, u.end, u.strand, u.assembly_id): u.id 
+        for u in session.execute(stmt).scalars().all()
+    }
 
-    ensembl_vdb_utr_map = {(u.start, u.end, u.strand, u.assembly_id): u.id for u in session.query(utr_class).all()}
-    dataset_ids = {x.name: x.id for x in session.query(Dataset).all()}
+    # Get dataset IDs
+    stmt = select(base.Dataset)
+    dataset_ids = {
+        d.name: d.id 
+        for d in session.execute(stmt).scalars().all()
+    }
     
+    # Prepare xrefs for bulk insert
+    utr_xrefs = []
     for idx, synonym_entries in synonym_dict.items():
         for dataset_name, synonyms in synonym_entries.items():
             for synonym in synonyms:
-                utr_xrefs.append(SequenceRegionXref(ensembl_vdb_utr_map[idx], synonym, 'synonym', dataset_ids['ENSEMBL'], dataset_ids[dataset_name]))
+                if not synonym:
+                    continue
+                utr_xrefs.append(base.SequenceRegionXref(
+                    sequence_region_id=utr_map[idx],
+                    xref=synonym,
+                    type='synonym',
+                    sequence_region_dataset_id=dataset_ids['ENSEMBL'],
+                    xref_dataset_id=dataset_ids[dataset_name]
+                ))
 
-    session.add_all(utr_xrefs)
+    # Bulk insert xrefs
+    session.bulk_save_objects(utr_xrefs)
     session.commit()
 
     logging.info(f'Added {len(utr_xrefs)} GENCODE UTR synonyms')
 
 
-def load_gencode_cds(session, cds_gff_df, assembly_ids):
-    """Load CDS from GENCODE gff
+def load_gencode_cds(
+    session: Session, 
+    cds_gff_df: pd.DataFrame, 
+    assembly_ids: Dict[str, int]
+) -> None:
+    """Load CDS from GENCODE GFF file.
 
     Args:
-        session (sqlalchemy.Session): An open database connection object
-        cds_gff_df (pandas.DataFrame): Subset of the gencode gff with CDS records
-        assembly_ids (dict): Mapping of GENCODE 'seq_id' to internal database ids
+        session: SQLAlchemy session object
+        cds_gff_df: GENCODE GFF dataframe filtered for CDS records
+        assembly_ids: Mapping of sequence IDs to assembly IDs
     """
+    # Map assembly IDs to DataFrame
+    cds_gff_df['assembly_id'] = cds_gff_df.apply(
+        lambda x: assembly_ids[x.seqid], 
+        axis=1
+    )
 
-    cds_gff_df['assembly_id'] = cds_gff_df.apply(lambda x: assembly_ids[x.seq_id], axis=1)
-
+    # Group by unique columns to handle redundant entries
     unique_cols = ['start', 'end', 'strand', 'assembly_id']
     cds_gff_df.sort_values(by=unique_cols, inplace=True)
-    grouped_cds_gff_df = cds_gff_df.groupby(unique_cols).aggregate(list)
     
-    cds = []
-    synonym_dict = {}
+    # Process attributes before grouping
+    cds_gff_df['attrs'] = cds_gff_df['attributes'].apply(parse_attributes)
+    cds_gff_df['ID'] = cds_gff_df['attrs'].apply(lambda x: x.get('ID', ''))
+    cds_gff_df['protein_id'] = cds_gff_df['attrs'].apply(lambda x: x.get('protein_id', ''))
+    cds_gff_df['Parent'] = cds_gff_df['attrs'].apply(lambda x: x.get('Parent', ''))
     
-    for idx, row in grouped_cds_gff_df.iterrows():
-        
-        synonym_dict[idx] = {'ENSEMBL': set()}
-        
-        for i in range(len(row.ID)):
-            ensembl_id = f'cds-{row.transcript_id[i]}-{row.protein_id[i]}-{row.exon_number[i]}'
-            
-            if i == 0:
-                cds.append(Cds(idx[0], idx[1], idx[2], idx[3],
-                            ensembl_id, '', '', '', 
-                            row.ccdsid[i], row.protein_id[i], ''))
+    grouped_cds_gff_df = cds_gff_df.groupby(unique_cols).agg({
+        'ID': list,
+        'protein_id': list,
+        'Parent': list,
+        'source': list,
+        'attrs': list
+    })
 
-            synonym_dict[idx]['ENSEMBL'].add(ensembl_id)
-                
-    session.add_all(cds)
+    # Get unmapped gene using SQLAlchemy 2.0 style
+    stmt = select(base.Gene).filter_by(hgnc_id='unmapped')
+    unmapped_gene = session.execute(stmt).scalar_one()
+
+    # Get transcript mappings
+    stmt = select(base.Transcript)
+    transcript_map = {
+        t.ensembl_id: t.id 
+        for t in session.execute(stmt).scalars().all()
+    }
+
+    cds_entries = []
+    synonym_dict = {}
+
+    for idx, row in grouped_cds_gff_df.iterrows():
+        try:
+            transcript_id = transcript_map[row.Parent[0]]
+        except KeyError:
+            transcript_id = unmapped_gene.id
+
+        cds_entries.append(base.Cds(
+            start=idx[0],
+            end=idx[1],
+            strand=idx[2],
+            assembly_id=idx[3],
+            ensembl_id=row.ID[0],
+            protein_id=row.protein_id[0] if row.protein_id[0] else '',
+            refseq_id='',
+            chess_id='',
+            velia_id='',
+            transcript_id=transcript_id
+        ))
+
+        syn_dict = {source: set() for source in row.source}
+        
+        for i, ID in enumerate(row.ID):
+            if ID:
+                syn_dict[row.source[i]].add(ID)
+            if row.protein_id[i]:
+                syn_dict[row.source[i]].add(row.protein_id[i])
+
+        synonym_dict[idx] = syn_dict
+
+    # Bulk insert CDS entries
+    session.bulk_save_objects(cds_entries)
     session.commit()
 
-    logging.info(f'Added {len(cds)} GENCODE CDS')
+    logging.info(f'Added {len(cds_entries)} GENCODE CDS')
 
+    # Get CDS IDs for xrefs
+    stmt = select(base.Cds)
+    cds_map = {
+        (c.start, c.end, c.strand, c.assembly_id): c.id 
+        for c in session.execute(stmt).scalars().all()
+    }
+
+    # Get dataset IDs
+    stmt = select(base.Dataset)
+    dataset_ids = {
+        d.name: d.id 
+        for d in session.execute(stmt).scalars().all()
+    }
+
+    # Prepare xrefs for bulk insert
     cds_xrefs = []
-
-    ensembl_vdb_cds_map = {(c.start, c.end, c.strand, c.assembly_id): c.id for c in session.query(Cds).all()}
-    dataset_ids = {x.name: x.id for x in session.query(Dataset).all()}
-    
     for idx, synonym_entries in synonym_dict.items():
         for dataset_name, synonyms in synonym_entries.items():
             for synonym in synonyms:
-                cds_xrefs.append(SequenceRegionXref(ensembl_vdb_cds_map[idx], synonym, 'synonym', dataset_ids['ENSEMBL'], dataset_ids[dataset_name]))
+                if not synonym:
+                    continue
+                cds_xrefs.append(base.SequenceRegionXref(
+                    sequence_region_id=cds_map[idx],
+                    xref=synonym,
+                    type='synonym',
+                    sequence_region_dataset_id=dataset_ids['ENSEMBL'],
+                    xref_dataset_id=dataset_ids[dataset_name]
+                ))
 
-    session.add_all(cds_xrefs)
+    # Bulk insert xrefs
+    session.bulk_save_objects(cds_xrefs)
     session.commit()
 
     logging.info(f'Added {len(cds_xrefs)} GENCODE CDS synonyms')
@@ -506,38 +796,50 @@ def load_gencode_exon_cds(session, cds_gff_df, assembly_ids):
     session.commit()
 
 
-def load_gencode_transcript_exons(session, transcript_exon_map):
+def load_gencode_transcript_exons(
+    session: Session, 
+    transcript_exon_map: Dict[str, List[Tuple[int, int]]]
+) -> None:
     """Load transcript-exon relationships from GENCODE data.
 
     Args:
         session: SQLAlchemy session object
-        transcript_exon_map (dict): Mapping of transcript IDs to exon info
+        transcript_exon_map: Mapping of transcript IDs to exon info (number, id)
     """
-    transcript_exons = []
-    ensembl_orf_tx_map = {
+    # Get transcript IDs using SQLAlchemy 2.0 style
+    stmt = select(base.Transcript)
+    transcript_map = {
         t.transcript_idx: t.id
-        for t in session.query(Transcript).all()
+        for t in session.execute(stmt).scalars().all()
     }
 
-    ts_exons = []
+    # Prepare transcript-exon relationships for bulk insert
+    transcript_exons = []
+    seen_relationships = set()
+
     for transcript_idx, exon_entries in transcript_exon_map.items():
+        transcript_id = transcript_map[transcript_idx]
+        
         for exon_num, exon_id in exon_entries:
-            ts_exons.append((ensembl_orf_tx_map[transcript_idx],
-                             exon_id,
-                             exon_num))
+            # Create unique key to avoid duplicates
+            relationship_key = (transcript_id, exon_id, exon_num)
+            if relationship_key in seen_relationships:
+                continue
+                
+            seen_relationships.add(relationship_key)
             
-    ts_exons = set(ts_exons)
-    for ts_exon in ts_exons:
-        transcript_exons.append(TranscriptExon(
-                ts_exon[0],
-                ts_exon[1],
-                ts_exon[2]
-        ))
+            transcript_exons.append(base.TranscriptExon(
+                transcript_id=transcript_id,
+                exon_id=exon_id,
+                exon_number=exon_num
+            ))
 
-    session.add_all(transcript_exons)
-    session.commit()
+    # Bulk insert transcript-exon relationships
+    if transcript_exons:
+        session.bulk_save_objects(transcript_exons)
+        session.commit()
 
-    logging.info(f'Added {len(transcript_exons)} GENCODE transcript exons')
+    logging.info(f'Added {len(transcript_exons)} GENCODE transcript-exon relationships')
 
 
 def load_uniprot(session, uniprot_dir):
@@ -844,6 +1146,7 @@ def load_refseq_exons(session, exon_gff_df):
     logging.info(f'Added {len(exons)} RefSeq exon without an exact coordinate match to GENCODE')
 
     vdb_exon_idx_map = {(e.start, e.end, e.strand, e.assembly_id): e.id for e in session.query(Exon).all()}
+    vdb_seq_syn_map = {(ss.sequence_region_id, ss.xref) for ss in session.query(SequenceRegionXref).all()}
 
     exon_xrefs = []
 
@@ -901,10 +1204,11 @@ def load_refseq_cds(session, cds_gff_df):
     session.add_all(cds)
     session.commit()
 
-    logging.info(f'Updated {len(update_entries)} CDS with RefSeq info that had exact coordinate matches to GENCODE')
-    logging.info(f'Added {len(cds)} RefSeq CDS without an exact coordinate match to GENCODE')
+    logging.info(f'Updated {len(update_entries)} CDS with RefSeq info that had exact coordinate matches to GENCODE/RefSeq')
+    logging.info(f'Added {len(cds)} RefSeq CDS without an exact coordinate match to GENCODE/RefSeq')
 
     vdb_cds_idx_map = {(c.start, c.end, c.strand, c.assembly_id): c.id for c in session.query(Cds).all()}
+    vdb_seq_syn_map = {(ss.sequence_region_id, ss.xref) for ss in session.query(SequenceRegionXref).all()}
 
     cds_xrefs = []
 
@@ -1119,8 +1423,8 @@ def load_chess_exons(session, exon_gff_df, assembly_ids):
     for idx, synonym_entries in synonym_dict.items():
         for dataset_name, synonyms in synonym_entries.items():
             for synonym in synonyms:
-                if (vdb_exon_idx_map[idx], synonym, dataset_ids['CHESS']) not in vdb_seq_syn_map and synonym != '':
-                    exon_xrefs.append(SequenceRegionXref(vdb_exon_idx_map[idx], synonym, 'synonym', dataset_ids['CHESS'], dataset_ids[dataset_name]))
+                if synonym == '': continue
+                exon_xrefs.append(SequenceRegionXref(vdb_exon_idx_map[idx], synonym, 'synonym', dataset_ids['CHESS'], dataset_ids[dataset_name]))
 
     session.add_all(exon_xrefs)
     session.commit()
@@ -1228,10 +1532,10 @@ def load_chess_transcripts(session, transcript_exon_gff_df):
 
         synonym_dict[transcript_idx] = syn_dict
 
-        transcript_exon_map[transcript_idx] = []
+        transcript_exon_map[transcript_id] = []
 
         for (exon_num, exon_id) in exon_ids:
-            transcript_exon_map[transcript_idx].append((exon_num, exon_id))
+            transcript_exon_map[transcript_id].append((exon_num, exon_id))
 
 
     session.bulk_update_mappings(Gene, gene_update_entries,)
@@ -1366,8 +1670,8 @@ def load_chess_cds(session, cds_gff_df):
     for idx, synonym_entries in synonym_dict.items():
         for dataset_name, synonyms in synonym_entries.items():
             for synonym in synonyms:
-                if (vdb_cds_idx_map[idx], synonym, dataset_ids['CHESS']) not in vdb_seq_syn_map and synonym != '':
-                    cds_xrefs.append(SequenceRegionXref(vdb_cds_idx_map[idx], synonym, 'synonym', dataset_ids['CHESS'], dataset_ids[dataset_name]))
+                if synonym == '': continue
+                cds_xrefs.append(SequenceRegionXref(vdb_cds_idx_map[idx], synonym, 'synonym', dataset_ids['CHESS'], dataset_ids[dataset_name]))
 
     session.add_all(cds_xrefs)
     session.commit()
@@ -1376,32 +1680,13 @@ def load_chess_cds(session, cds_gff_df):
 def load_gencode_lncRNA_genes(session, gene_gff_df):
     """Load long non-coding RNA genes from GENCODE GFF data.
 
-    This function processes GENCODE gene annotations specifically for lncRNA genes,
-    adding them to the database and creating appropriate cross-references.
-    It handles both new gene entries and updates to existing genes.
-
     Args:
         session: SQLAlchemy session object
-        gene_gff_df (pd.DataFrame): GENCODE GFF dataframe filtered for lncRNA genes.
-            Expected columns include:
-            - start: Gene start position
-            - end: Gene end position
-            - strand: Strand orientation ('+' or '-')
-            - assembly_id: Reference assembly identifier
-            - ID: GENCODE gene identifier
-            - gene_type: Type of gene (e.g., 'lncRNA')
-            - tag: Additional gene annotations
-            - gene_name: Official gene symbol
-            - hgnc_id: HGNC identifier
-            - source: Data source identifier
-
-    Returns:
-        None
+        gene_gff_df (pd.DataFrame): GENCODE GFF dataframe filtered for lncRNA genes
 
     Note:
-        The function creates both gene entries and cross-references (synonyms)
-        in the database. It handles duplicate entries by updating existing records
-        rather than creating new ones.
+        Creates both gene entries and cross-references in the database.
+        Handles duplicates by updating existing records.
     """
     unique_cols = ['start', 'end', 'strand', 'assembly_id']
     gene_gff_df.sort_values(by=unique_cols, inplace=True)
@@ -1417,7 +1702,7 @@ def load_gencode_lncRNA_genes(session, gene_gff_df):
     synonym_dict = {}
 
     for gene_idx, row in grouped_gene_gff_df.iterrows():
-        if gene_idx in vdb_gene_idx_map.keys():
+        if gene_idx in vdb_gene_idx_map:
             gene_id = vdb_gene_idx_map[gene_idx]
             update_entries.append({
                 "id": gene_id,
@@ -1427,17 +1712,20 @@ def load_gencode_lncRNA_genes(session, gene_gff_df):
                     "tag": row.tag[0]
                 }
             })
-        elif gene_idx not in synonym_dict.keys():
+        elif gene_idx not in synonym_dict:
             new_genes.append(Gene(
                 gene_idx[0], gene_idx[1], gene_idx[2], gene_idx[3],
-                row.hgnc_id[0], row.gene_name[0], row.ID[0], '', '', '',
-                row.gene_type[0], '',
-                attrs={"gene_type": row.gene_type[0], "tag": row.tag[0]}
+                row.hgnc_id[0], row.gene_name[0], row.ID[0], 
+                '', '', '', row.gene_type[0], '',
+                attrs={
+                    "gene_type": row.gene_type[0], 
+                    "tag": row.tag[0]
+                }
             ))
 
         syn_dict = {source: set() for source in row.source}
         for i, ID in enumerate(row.ID):
-            syn_dict[row.source[i]].add(row.gene_name[i])
+            syn_dict[row.source[i]].add(row.Name[i])
             syn_dict[row.source[i]].add(ID)
             syn_dict[row.source[i]].add(row.gene_id[i])
 
@@ -1466,7 +1754,7 @@ def load_gencode_lncRNA_genes(session, gene_gff_df):
     for idx, synonym_entries in synonym_dict.items():
         for dataset_name, synonyms in synonym_entries.items():
             for synonym in synonyms:
-                if synonym == '':
+                if not synonym:
                     continue
                 gene_xrefs.append(SequenceRegionXref(
                     vdb_gene_idx_map[idx],
@@ -1480,3 +1768,124 @@ def load_gencode_lncRNA_genes(session, gene_gff_df):
     session.commit()
 
     logging.info(f'Added {len(gene_xrefs)} GENCODE lncRNA synonyms')
+
+
+def load_bigprot_orfs(session, bigprot_dir):
+    """Load BigProt ORF entries from a CSV file.
+
+    Args:
+        session: SQLAlchemy session object
+        bigprot_dir (Path): Directory containing BigProt files
+    """
+    chunk_size = 600000
+    bigprot_csv = bigprot_dir.joinpath(
+        'orfset_v0.9.3_full_minlen_15_maxlen_999999999_orfs.csv.gz'
+    )
+
+    reader = pd.read_csv(bigprot_csv, chunksize=chunk_size)
+
+    for chunk in reader:
+        orfs = []
+        chunk.columns = [col[4:] for col in chunk.columns]
+
+        for _, row in chunk.iterrows():
+            orfs.append(Orf(
+                row.start, row.end, row.strand, row.assembly_id,
+                row.block_sizes, row.chrom_starts, row.phases, 
+                row.exon_frames, row.orf_idx, row.orf_idx_str,
+                row.secondary_orf_id, row.aa_seq, '',
+                '', '', '', id=row.id
+            ))
+        
+        session.add_all(orfs)
+        session.commit()
+
+
+
+def load_bigprot_transcripts(session, bigprot_dir):
+    """Load BigProt transcript entries from a CSV file.
+
+    Args:
+        session: SQLAlchemy session object
+        bigprot_dir (Path): Directory containing BigProt files
+    """
+    chunk_size = 600000
+    bigprot_csv = bigprot_dir.joinpath(
+        'orfset_v0.9.3_full_minlen_15_maxlen_999999999_transcript_orfs.csv.gz'
+    )
+
+    reader = pd.read_csv(bigprot_csv, chunksize=chunk_size)
+
+    for chunk in reader:
+        tx_orfs = []
+
+        for _, row in chunk.iterrows():
+            tx_orfs.append(
+                TranscriptOrf(row['transcript_orf.transcript_id'],
+                                   row['transcript_orf.orf_id'],
+                                   row['transcript_orf.evidence_tag']
+                               ))
+        
+        session.add_all(tx_orfs)
+        session.commit()
+
+
+def load_bigprot_cds_orf(session, bigprot_dir):
+    """Load BigProt CDS ORF entries from a CSV file.
+
+    Args:
+        session: SQLAlchemy session object
+        bigprot_dir (Path): Directory containing BigProt files
+    """
+    chunk_size = 500000
+    bigprot_csv = bigprot_dir.joinpath(
+        'orfset_v0.9.3_full_minlen_15_maxlen_999999999_cds_orfs.csv.gz'
+    )
+
+    reader = pd.read_csv(bigprot_csv, chunksize=chunk_size)
+
+    for chunk in reader:
+        cds_orfs = []
+
+        for _, row in chunk.iterrows():
+            cds_orfs.append(CdsOrf(
+                row['cds_orf.cds_id'],
+                row['cds_orf.orf_id'],
+                row['cds_orf.cds_number'],
+                row['cds_orf.phase'],
+                row['cds_orf.reading_frame']
+            ))
+        
+        session.add_all(cds_orfs)
+        session.commit()
+
+
+def parse_attributes(attr_str: str) -> Dict[str, Any]:
+    """Parse GFF/GTF attribute string into a dictionary.
+    
+    Args:
+        attr_str: String containing semicolon-separated key-value pairs
+        
+    Returns:
+        Dictionary of attribute key-value pairs
+        
+    Example:
+        >>> parse_attributes('ID=gene1;Name=BRCA1;gene_type=protein_coding')
+        {'ID': 'gene1', 'Name': 'BRCA1', 'gene_type': 'protein_coding'}
+    """
+    if not attr_str or pd.isna(attr_str):
+        return {}
+        
+    attrs = {}
+    for attr in attr_str.split(';'):
+        if not attr.strip():
+            continue
+            
+        try:
+            key, value = attr.strip().split('=', 1)
+            attrs[key.strip()] = value.strip(' "\'')
+        except ValueError:
+            # Skip malformed attributes
+            continue
+            
+    return attrs

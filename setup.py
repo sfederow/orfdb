@@ -16,7 +16,7 @@ setup(
     keywords='microproteins',
     packages=find_packages(),
     install_requires=[
-        'SQLAlchemy>=1.3.10,<2.0',
+        'SQLAlchemy>=2.0',
         'numpy>=1.17.2',
         'psycopg2-binary',
         'scipy>=1.3.1',
@@ -25,6 +25,9 @@ setup(
         'tornado>=4.5.3',
         'configparser>=4.0.2',
         'click',
+        'biopython',
+        'sqlalchemy-batch-inserts',
+        'seqmap',
     ],
     entry_points = {
         'console_scripts': ['orfdb_load=orfdb.load_db:load_db'],

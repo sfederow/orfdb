@@ -9,14 +9,13 @@ including GENCODE, RefSeq, CHESS, OpenProt, and custom ORF annotations.
 import logging
 import time
 import sys
-import six
-from os import listdir
-from os.path import join, isfile
-from collections import defaultdict
 from pathlib import Path
+from typing import Optional
 
 import click
 import pandas as pd
+from sqlalchemy import select
+from sqlalchemy.orm import Session
 
 from orfdb import base, settings
 from orfdb import annotation_loading, annotation_updates
@@ -26,16 +25,19 @@ import seqmap.utils as seq_utils
 from sqlalchemy_batch_inserts import enable_batch_inserting
 
 
-def configure_logger(log_file=None, level=logging.INFO, overwrite_log=True,
-                    format=logging.BASIC_FORMAT):
+def configure_logger(
+    log_file: Optional[str] = None, 
+    level: int = logging.INFO, 
+    overwrite_log: bool = True,
+    format: str = logging.BASIC_FORMAT
+) -> None:
     """Configure logging for the application.
 
     Args:
-        log_file (str, optional): Path to log file. Defaults to None (stdout).
-        level (int, optional): Logging level. Defaults to logging.INFO.
-        overwrite_log (bool, optional): Whether to overwrite existing log.
-            Defaults to True.
-        format (str, optional): Log message format. Defaults to BASIC_FORMAT.
+        log_file: Path to log file. Defaults to None (stdout).
+        level: Logging level. Defaults to logging.INFO.
+        overwrite_log: Whether to overwrite existing log. Defaults to True.
+        format: Log message format. Defaults to BASIC_FORMAT.
     """
     if log_file is None:
         logging.basicConfig(stream=sys.stdout, level=level, format=format)
@@ -54,11 +56,11 @@ def configure_logger(log_file=None, level=logging.INFO, overwrite_log=True,
 
 @click.command()
 @click.option('--drop-all', is_flag=True, help='Empty database and reload data.')
-def load_db(drop_all):
+def load_db(drop_all: bool) -> None:
     """Main entry point for loading the ORF database.
 
     Args:
-        drop_all (bool): If True, drops and recreates all database tables.
+        drop_all: If True, drops and recreates all database tables.
     """
     configure_logger(
         f"{time.strftime('%Y%m%d_%H%M%S')}_orfdb_load_db.log",
@@ -67,10 +69,10 @@ def load_db(drop_all):
 
     if drop_all:
         logging.info('Dropping the database')
-        base.Base.metadata.drop_all()
+        base.Base.metadata.drop_all(bind=base.engine)
         
         logging.info('Creating the database')
-        base.Base.metadata.create_all()
+        base.Base.metadata.create_all(bind=base.engine)
 
     # Initialize database session
     session = base.Session()
@@ -78,36 +80,31 @@ def load_db(drop_all):
 
     logging.info(f'Loading {settings.db_connection_string}')
 
-    logging.info('Loading GENCODE')
-    load_gencode_gff(session, settings.gencode_directory,
-                     settings.gencode_version, settings.genomes_directory)
+    try:
+        logging.info('Loading GENCODE')
+        load_gencode_gff(session, settings.gencode_directory,
+                        settings.gencode_version, settings.genomes_directory)
 
-    logging.info('Loading RefSeq')
-    load_refseq_gff(session, settings.refseq_directory)
+        logging.info('Loading RefSeq')
+        load_refseq_gff(session, settings.refseq_directory)
 
-    logging.info('Loading CHESS')
-    load_chess_gff(session, settings.chess_directory)
+        logging.info('Loading CHESS')
+        load_chess_gff(session, settings.chess_directory)
 
-    logging.info('Loading Uniprot')
-    #annotation_loading.load_uniprot(session, settings.uniprot_directory)
+        logging.info('Loading BigProt')
+        load_bigprot_tables(session, settings.bigprot_directory)
 
-    #logging.info('Loading Openprot')
-    #load_openprot_bed(session, settings.openprot_directory)
-    
-    #logging.info('Updating RiboSeq CDS')
-    #annotation_loading.update_riboseq_cds(session, settings.gencode_directory,
-    #                                     'v42')
-
-    logging.info('Updating ensembl <-> refseq gene mappings')
-    #annotation_updates.update_ensembl_entrez_gene_mapping(
-    #    settings.gencode_directory, 'v42', session)
-    
-    logging.info('Updating CHESS transcript IDs to fix parsing error')
-    annotation_updates.update_chess_transcript_ids(
-        settings.chess_directory, session)
-    
-    session.close()
-    base.Session.close_all()
+        logging.info('Updating ensembl <-> refseq gene mappings')
+        annotation_updates.update_chess_transcript_ids(
+            settings.chess_directory, session)
+        
+        session.commit()
+    except Exception as e:
+        session.rollback()
+        logging.error(f"Error during database loading: {str(e)}")
+        raise
+    finally:
+        session.close()
 
 
 def load_gencode_gff(session, gencode_dir, version, genome_dir):
@@ -123,9 +120,9 @@ def load_gencode_gff(session, gencode_dir, version, genome_dir):
         version,
         'GCA_000001405.28_GRCh38.p13_assembly_report.txt'
     )
-    gencode_expanded_gff = gencode_dir.joinpath(
+    gencode_gff = gencode_dir.joinpath(
         version,
-        f'gencode.{version}.chr_patch_hapl_scaff.annotation.expanded.gff3'
+        f'gencode.{version}.chr_patch_hapl_scaff.annotation.gff3.gz'
     )
 
     assembly_df = pd.read_csv(
@@ -140,7 +137,18 @@ def load_gencode_gff(session, gencode_dir, version, genome_dir):
 
     logging.info(f'Loading GENCODE {version} GFF')
 
-    gff_df = pd.read_csv(gencode_expanded_gff, sep='\t', low_memory=False)
+    # Read gzipped GFF file, skipping header rows
+    gff_df = pd.read_csv(
+        gencode_gff, 
+        sep='\t', 
+        low_memory=False,
+        compression='gzip' if str(gencode_gff).endswith('.gz') else None,
+        comment='#',
+        names=[
+            'seqid', 'source', 'type', 'start', 'end', 
+            'score', 'strand', 'phase', 'attributes'
+        ]
+    )
     gff_df.fillna('', inplace=True)
 
     # Filter dataframes by type
@@ -154,34 +162,39 @@ def load_gencode_gff(session, gencode_dir, version, genome_dir):
     del gff_df
 
     # Create or update datasets
-    session.upsert(
+    base.upsert(
+        session,
         base.Dataset,
         name='ENSEMBL',
         description='Automated ENSEMBL/GENCODE annotations',
         type='dataset',
         attrs={'version': version}
     )
-    session.upsert(
+    base.upsert(
+        session,
         base.Dataset,
         name='HAVANA',
         description='Manual ENSEMBL/GENCODE annotations',
         type='dataset',
         attrs={'version': version}
     )
-    session.upsert(
+    base.upsert(
+        session,
         base.Dataset,
         name='CCDS',
         description='CCDS consensus cds project',
         type='dataset'
     )
-    session.upsert(
+    base.upsert(
+        session,
         base.Dataset,
         name='HGNC_ID',
         description='HUGO Human gene nomenclature numeric gene IDs',
         type='dataset',
         attrs={'version': version}
     )
-    session.upsert(
+    base.upsert(
+        session,
         base.Dataset,
         name='HGNC_SYMBOL',
         description='HUGO Human gene nomenclature symbols',
@@ -424,9 +437,65 @@ def load_chess_gff(session, chess_dir):
     annotation_loading.load_chess_cds(session, cds_gff_df)
 
 
+def load_bigprot_tables(session, bigprot_dir):
+    """Load BigProt tables from the given directory.
 
+    Args:
+        session: SQLAlchemy session object
+        bigprot_dir (Path): Directory containing BigProt files
+    """
 
+    required_files = [
+        'orfset_v0.9.3_full_minlen_15_maxlen_999999999_orfs.csv.gz',
+        'orfset_v0.9.3_full_minlen_15_maxlen_999999999_transcript_orfs.csv.gz',
+        'orfset_v0.9.3_full_minlen_15_maxlen_999999999_cds_orfs.csv.gz'
+    ]
+    
+    files_exist = all(
+        bigprot_dir.joinpath(filename).exists() 
+        for filename in required_files
+    )
+    
+    if not files_exist:
+        logging.info('BigProt analysis files missing, running analysis...')
+        try:
+            from orfdb.bigprot.find_orfs import perform_analysis
+            perform_analysis(
+                output=str(bigprot_dir),
+                verbose=True,
+                dataset_name='BigProt',
+                genome_fasta_fpath=str(settings.genomes_directory.joinpath(
+                    'hg38', 'GRCh38.p13.genome.fa.gz')),
+                db_settings_fpath=str(Path(__file__).parent.parent / 'settings.ini'),
+                gtf_file_fpath=str(bigprot_dir.joinpath(
+                    'gencode.v42.chr_patch_hapl_scaff.annotation.expanded.gff3')),
+                min_codon_length=15,
+                max_codon_length=999999999
+            )
+        except Exception as e:
+            logging.error(f'Failed to run BigProt analysis: {str(e)}')
+            return
+    
+    try:
+        logging.info('Loading BigProt ORFs')
+        annotation_loading.load_bigprot_orfs(session, bigprot_dir)
+        
+        logging.info('Loading BigProt transcripts')
+        annotation_loading.load_bigprot_transcripts(session, bigprot_dir)
+        
+        logging.info('Loading BigProt CDS-ORF mappings')
+        annotation_loading.load_bigprot_cds_orf(session, bigprot_dir)
+        
+        session.commit()
+    except Exception as e:
+        session.rollback()
+        logging.error(f'Failed to load BigProt data: {str(e)}')
+        raise
 
 
 if __name__ == '__main__':
-    load_db()
+    try:
+        load_db()
+    except Exception as e:
+        logging.error(f"Failed to load database: {str(e)}")
+        sys.exit(1)
