@@ -82,21 +82,21 @@ def load_db(drop_all: bool) -> None:
 
     try:
         logging.info('Loading GENCODE')
-        load_gencode_gff(session, settings.gencode_directory,
-                        settings.gencode_version, settings.genomes_directory)
+        #load_gencode_gff(session, settings.gencode_directory,
+        #                settings.gencode_version, settings.genomes_directory)
 
         logging.info('Loading RefSeq')
-        load_refseq_gff(session, settings.refseq_directory)
+        #load_refseq_gff(session, settings.refseq_directory)
 
         logging.info('Loading CHESS')
         load_chess_gff(session, settings.chess_directory)
 
         logging.info('Loading BigProt')
-        load_bigprot_tables(session, settings.bigprot_directory)
+        #load_bigprot_tables(session, settings.bigprot_directory)
 
         logging.info('Updating ensembl <-> refseq gene mappings')
-        annotation_updates.update_chess_transcript_ids(
-            settings.chess_directory, session)
+        #annotation_updates.update_chess_transcript_ids(
+        #    settings.chess_directory, session)
         
         session.commit()
     except Exception as e:
@@ -240,9 +240,9 @@ def load_gencode_gff(session, gencode_dir, version, genome_dir):
     annotation_loading.load_gencode_cds(session, cds_gff_df, assembly_ids)
     
     logging.info('Loading GENCODE ORFs')
-    cds_orf_map = annotation_loading.load_gencode_orfs(
-        session, cds_gff_df, assembly_ids)
-    annotation_loading.load_gencode_orf_cds(session, cds_orf_map)
+    #cds_orf_map = annotation_loading.load_gencode_orfs(
+    #    session, cds_gff_df, assembly_ids)
+    #annotation_loading.load_gencode_orf_cds(session, cds_orf_map)
 
     # Load Ribo-seq ORFs
     bed_cols = [
@@ -265,28 +265,28 @@ def load_gencode_gff(session, gencode_dir, version, genome_dir):
         genome_dir.joinpath('hg38', 'hg38_no-altChr.fa'))
 
     logging.info('Loading GENCODE Riboseq ORFs')
-    (transcript_exon_rb_map,
-     transcript_orf_map,
-     exon_cds_map,
-     cds_orf_map) = annotation_loading.load_gencode_riboseq_orfs(
-        session, orf_bed_df, assembly_ids, genome_seq)
+    #(transcript_exon_rb_map,
+    # transcript_orf_map,
+    # exon_cds_map,
+    # cds_orf_map) = annotation_loading.load_gencode_riboseq_orfs(
+    #    session, orf_bed_df, assembly_ids, genome_seq)
 
-    annotation_loading.load_gencode_riboseq_orf_cds(session, cds_orf_map)
+    #annotation_loading.load_gencode_riboseq_orf_cds(session, cds_orf_map)
 
     logging.info('Loading GENCODE transcript <-> exon relationships for '
                 'riboseq orfs')
-    annotation_loading.load_gencode_riboseq_transcript_exons(
-        session, transcript_exon_rb_map)
+    #annotation_loading.load_gencode_riboseq_transcript_exons(
+    #    session, transcript_exon_rb_map)
     
     logging.info('Loading GENCODE transcript <-> ORF relationships')
-    annotation_loading.load_gencode_riboseq_transcript_orfs(
-        session, transcript_orf_map)
-    annotation_loading.load_gencode_transcript_orfs(
-        session, tx_gff_df, assembly_ids)
+    #annotation_loading.load_gencode_riboseq_transcript_orfs(
+    #    session, transcript_orf_map)
+    #annotation_loading.load_gencode_transcript_orfs(
+    #    session, tx_gff_df, assembly_ids)
 
     logging.info('Loading GENCODE exon <-> cds relationships')
-    annotation_loading.load_gencode_riboseq_exon_cds(
-        session, exon_cds_map)
+    #annotation_loading.load_gencode_riboseq_exon_cds(
+    #     session, exon_cds_map)
     annotation_loading.load_gencode_exon_cds(
         session, cds_gff_df, assembly_ids)
 
@@ -307,13 +307,18 @@ def load_refseq_gff(session, refseq_dir):
         refseq_dir (Path): Directory containing RefSeq files
     """
     refseq_gff = refseq_dir.joinpath(
-        'GCA_000001405.15_GRCh38_full_analysis_set.'
-        'refseq_annotation.expanded.ids.gff'
+        'GCA_000001405.15_GRCh38_full_analysis_set.refseq_annotation.gff.gz'
     )
     refseq_df = pd.read_csv(
         refseq_gff,
         sep='\t',
-        dtype={'HGNC_ID': str, 'entrez_gene_id': str}
+        dtype={'HGNC_ID': str, 'entrez_gene_id': str},
+        compression='gzip' if str(refseq_gff).endswith('.gz') else None,
+        comment='#',
+        names=[
+            'seq_id', 'source', 'type', 'start', 'end', 'score', 'strand',
+            'phase', 'attributes'
+        ]
     )
     refseq_df.fillna('', inplace=True)
 
@@ -326,7 +331,19 @@ def load_refseq_gff(session, refseq_dir):
         'protein_id', 'experiment', 'inference', 'Note'
     ]
 
-    refseq_df = refseq_df[refseq_cols].copy()
+    #refseq_df = refseq_df[refseq_cols].copy()
+
+    assembly_ids = {}
+    for assembly in session.query(base.Assembly).all():
+        if assembly.ucsc_style_name.startswith('chr') and \
+           len(assembly.ucsc_style_name) < 6:
+            assembly_ids[assembly.ucsc_style_name] = assembly.id
+        else:
+            assembly_ids[assembly.genbank_accession] = assembly.id
+
+    refseq_df['assembly_id'] = refseq_df['seq_id'].apply(
+        lambda x: int(assembly_ids.get(x, -1))
+    )
 
     # Filter dataframes by type
     gene_gff_df = refseq_df[refseq_df['type'] == 'gene'].copy()
@@ -336,7 +353,8 @@ def load_refseq_gff(session, refseq_dir):
     cds_gff_df = refseq_df[refseq_df['type'] == 'CDS'].copy()
 
     # Create dataset
-    refseq_dataset = session.upsert(
+    refseq_dataset = base.upsert(
+        session,
         base.Dataset,
         name="RefSeq",
         description="NCBI Genome Annotation from gff",
@@ -345,13 +363,15 @@ def load_refseq_gff(session, refseq_dir):
     )
 
     for source in set(refseq_df['source']):
-        session.upsert(
+        base.upsert(
+            session,
             base.Dataset,
             name=source,
             description='',
             type="dataset",
             attrs={"version": "GCA_000001405.15_GRCh38"}
         )
+
     
     # Load RefSeq components
     logging.info('Loading RefSeq genes')
@@ -372,13 +392,13 @@ def load_refseq_gff(session, refseq_dir):
     annotation_loading.load_refseq_cds(session, cds_gff_df)
 
     logging.info('Loading RefSeq ORFs')
-    cds_orf_map = annotation_loading.load_refseq_orfs(session, cds_gff_df)
+    #cds_orf_map = annotation_loading.load_refseq_orfs(session, cds_gff_df)
 
     logging.info('Loading RefSeq ORFs <-> CDS mapping')
-    annotation_loading.load_refseq_orf_cds(session, cds_orf_map)
+    #annotation_loading.load_refseq_orf_cds(session, cds_orf_map)
 
     logging.info('Loading RefSeq transcript <-> orf mappings')
-    annotation_loading.load_refseq_transcript_orfs(session, cds_gff_df)
+    #annotation_loading.load_refseq_transcript_orfs(session, cds_gff_df)
 
 
 def load_chess_gff(session, chess_dir):
@@ -388,12 +408,37 @@ def load_chess_gff(session, chess_dir):
         session: SQLAlchemy session object
         chess_dir (Path): Directory containing CHESS files
     """
-    chess_expanded_gff = chess_dir.joinpath('chess3.0.expanded.gff')
-    chess_df = pd.read_csv(chess_expanded_gff, sep='\t', low_memory=False)
+    chess_gff = chess_dir.joinpath('chess3.0.gff.gz')
+    chess_df = pd.read_csv(
+        chess_gff,
+        sep='\t',
+        compression='gzip' if str(chess_gff).endswith('.gz') else None,
+        low_memory=False,
+        comment='#',
+        names=[
+            'seq_id', 'source', 'type', 'start', 'end', 'score', 'strand',
+            'phase', 'attributes'
+        ]
+    )
     chess_df.fillna('', inplace=True)
 
+    assembly_ids = {}
+    for assembly in session.query(base.Assembly).all():
+        if assembly.ucsc_style_name.startswith('chr') and \
+           len(assembly.ucsc_style_name) < 6:
+            assembly_ids[assembly.ucsc_style_name] = assembly.id
+        else:
+            assembly_ids[assembly.genbank_accession] = assembly.id
+
+    chess_df['assembly_id'] = chess_df['seq_id'].apply(
+        lambda x: int(assembly_ids.get(x, -1))
+    )
+
+    print(chess_df.head())
+
     # Create dataset
-    chess_dataset = session.upsert(
+    chess_dataset = base.upsert(
+        session,
         base.Dataset,
         name="CHESS",
         description="CHESS annotation source",
@@ -405,7 +450,8 @@ def load_chess_gff(session, chess_dir):
     )
 
     for source in set(chess_df['source']):
-        session.upsert(
+        base.upsert(
+            session,
             base.Dataset,
             name=source,
             description='',
@@ -426,15 +472,15 @@ def load_chess_gff(session, chess_dir):
     annotation_loading.load_chess_exons(session, exon_gff_df)
     
     logging.info('Loading CHESS transcripts')
-    transcript_exon_map = annotation_loading.load_chess_transcripts(
-        session, tx_gff_df, exon_gff_df)
+    #transcript_exon_map = annotation_loading.load_chess_transcripts(
+    #    session, tx_gff_df, exon_gff_df)
 
     logging.info('Loading CHESS transcrips <-> exons')
-    annotation_loading.load_chess_transcript_exons(
-        session, transcript_exon_map)
+    #annotation_loading.load_chess_transcript_exons(
+    #    session, transcript_exon_map)
 
     logging.info('Loading CHESS CDS')
-    annotation_loading.load_chess_cds(session, cds_gff_df)
+    #annotation_loading.load_chess_cds(session, cds_gff_df)
 
 
 def load_bigprot_tables(session, bigprot_dir):
