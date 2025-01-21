@@ -1804,45 +1804,70 @@ def load_chess_exons(session: Session, exon_gff_df: pd.DataFrame) -> None:
     logging.info(f'Added {len(exon_xrefs)} CHESS exon synonyms')
 
 
-def load_chess_transcripts(session: Session, transcript_exon_gff_df: pd.DataFrame) -> Dict[str, List[Tuple[int, int]]]:
-    """Load transcript data from CHESS database.
-
-    This function processes and loads transcript annotations from CHESS,
-    including transcript-exon relationships and transcript attributes.
+def load_chess_transcripts(session: Session, tx_gff_df: pd.DataFrame, exon_gff_df: pd.DataFrame) -> Dict[str, List[Tuple[int, int]]]:
+    """Load transcripts from CHESS GFF file.
 
     Args:
         session: SQLAlchemy session object
-        transcript_exon_gff_df: CHESS GFF dataframe with transcript and exon information
+        tx_gff_df: CHESS GFF dataframe filtered for transcript records
+        exon_gff_df: CHESS GFF dataframe filtered for exon records
 
     Returns:
-        Dict[str, List[Tuple[int, int]]]: Mapping of transcript IDs to their exon information
+        Dict[str, List[Tuple[int, int]]]: Mapping of transcript IDs to lists of (exon_number, exon_id) tuples
     """
-    # Process attributes
-    transcript_exon_gff_df['attrs'] = transcript_exon_gff_df['attributes'].apply(parse_attributes)
-    transcript_exon_gff_df['ID'] = transcript_exon_gff_df['attrs'].apply(lambda x: x.get('ID', ''))
-    transcript_exon_gff_df['Name'] = transcript_exon_gff_df['attrs'].apply(lambda x: x.get('Name', ''))
-    transcript_exon_gff_df['gene_name'] = transcript_exon_gff_df['attrs'].apply(lambda x: x.get('gene_name', ''))
-    transcript_exon_gff_df['gene_type'] = transcript_exon_gff_df['attrs'].apply(lambda x: x.get('gene_type', ''))
-    transcript_exon_gff_df['db_xref'] = transcript_exon_gff_df['attrs'].apply(lambda x: x.get('db_xref', ''))
-    transcript_exon_gff_df['num_samples'] = transcript_exon_gff_df['attrs'].apply(lambda x: x.get('num_samples', ''))
-    transcript_exon_gff_df['max_tpm'] = transcript_exon_gff_df['attrs'].apply(lambda x: x.get('max_tpm', ''))
+    exon_gff_df.sort_values(by='start', inplace=True)
 
-    unique_cols = ['ID', 'start_tx', 'end_tx', 'strand_tx', 'assembly_id_tx', 'gene_name_tx', 'gene_type_tx', 'db_xref_tx', 'num_samples_tx', 'max_tpm_tx']
-    transcript_exon_gff_df.sort_values(by=unique_cols, inplace=True)
-    grouped_transcript_exon_gff_df = transcript_exon_gff_df.groupby(unique_cols).aggregate(list)
+    # Process attributes for both dataframes
+    exon_gff_df['attrs'] = exon_gff_df['attributes'].apply(parse_attributes)
+    exon_gff_df['ID'] = exon_gff_df['attrs'].apply(lambda x: x.get('ID', ''))
+    exon_gff_df['Parent'] = exon_gff_df['attrs'].apply(lambda x: x.get('Parent', ''))
+    exon_gff_df['gene_id'] = exon_gff_df['attrs'].apply(lambda x: x.get('gene_id', ''))
+    exon_gff_df['transcript_id'] = exon_gff_df['attrs'].apply(lambda x: x.get('transcript_id', ''))
 
-    # Get transcript mappings using SQLAlchemy 2.0 style
+    tx_gff_df['attrs'] = tx_gff_df['attributes'].apply(parse_attributes)
+    tx_gff_df['ID'] = tx_gff_df['attrs'].apply(lambda x: x.get('ID', ''))
+    tx_gff_df['geneID'] = tx_gff_df['attrs'].apply(lambda x: x.get('geneID', ''))
+    tx_gff_df['gene_name'] = tx_gff_df['attrs'].apply(lambda x: x.get('gene_name', ''))
+    tx_gff_df['gene_type'] = tx_gff_df['attrs'].apply(lambda x: x.get('gene_type', ''))
+    tx_gff_df['db_xref'] = tx_gff_df['attrs'].apply(lambda x: x.get('db_xref', ''))
+    tx_gff_df['num_samples'] = tx_gff_df['attrs'].apply(lambda x: x.get('num_samples', ''))
+    tx_gff_df['max_tpm'] = tx_gff_df['attrs'].apply(lambda x: x.get('max_tpm', ''))
+
+    exon_grouped_df = exon_gff_df.groupby('Parent').aggregate(list)
+
+    exon_grouped_df['exon_number'] = exon_grouped_df.apply(
+        lambda x: range(1, len(x.start)+1) if x.strand[0] == '+' 
+        else [y for y in range(1, len(x.start)+1)][::-1], 
+        axis=1
+    )
+    
+    transcript_exon_gff_df = exon_grouped_df.merge(
+        tx_gff_df, 
+        left_index=True, 
+        right_on='ID', 
+        suffixes=('_ex', '_tx'), 
+        how='left'
+    )
+    transcript_exon_gff_df.set_index(['ID', 'start_tx', 'end_tx', 'strand_tx', 'assembly_id_tx'], inplace=True)
+
+    # Get gene mappings using SQLAlchemy 2.0 style
+    stmt = select(SequenceRegionXref).join(Gene, Gene.id == SequenceRegionXref.sequence_region_id)
+    synonym_vdb_gene_map = {
+        gs.xref: gs.sequence_region_id 
+        for gs in session.execute(stmt).scalars().all()
+    }
+
+    # Get transcript and exon mappings using SQLAlchemy 2.0 style
     stmt = select(Transcript)
     vdb_transcript_idx_map = {
         t.transcript_idx: t.id 
         for t in session.execute(stmt).scalars().all()
     }
 
-    # Get exon mappings using SQLAlchemy 2.0 style
     stmt = select(Exon)
     vdb_exon_map = {
         (e.start, e.end, e.strand, e.assembly_id): e.id 
-        for t in session.execute(stmt).scalars().all()
+        for e in session.execute(stmt).scalars().all()
     }
 
     transcripts = []
@@ -1857,9 +1882,10 @@ def load_chess_transcripts(session: Session, transcript_exon_gff_df: pd.DataFram
     stmt = select(Gene).filter_by(hgnc_id='unmapped')
     unmapped_gene = session.execute(stmt).scalar_one()
 
-    for (transcript_id, start, end, strand, assembly_id), row in grouped_transcript_exon_gff_df.iterrows():
+    for (transcript_id, start, end, strand, assembly_id), row in transcript_exon_gff_df.iterrows():
         try:
-            gene_id = synonym_vdb_gene_map[row.entrez_gene_id_tx[0]]
+            gene_id = synonym_vdb_gene_map[row.gene_name]
+            gene_update_entries.append({"id": gene_id, "chess_id": row.geneID})
         except:
             gene_id = unmapped_gene.id
         
@@ -1887,10 +1913,10 @@ def load_chess_transcripts(session: Session, transcript_exon_gff_df: pd.DataFram
                 "id": transcript_vdb_id, 
                 "chess_id": transcript_id, 
                 "attrs": {
-                    "gene_type": row.gene_type_tx[0],
-                    "db_xref": row.db_xref_tx[0],
-                    "num_samples": row.num_samples_tx[0],
-                    "max_tpm": row.max_tpm_tx[0]
+                    "gene_type": row.gene_type,
+                    "db_xref": row.db_xref,
+                    "num_samples": row.num_samples,
+                    "max_tpm": row.max_tpm
                 }
             })
 
@@ -1911,27 +1937,26 @@ def load_chess_transcripts(session: Session, transcript_exon_gff_df: pd.DataFram
                 refseq_id='',
                 chess_id=transcript_id,
                 velia_id='',
-                model_evidence='',
-                gene_type=row.gene_type_tx[0],
+                support_level='',
+                transcript_type=row.gene_type,
                 attrs={
-                    "gene_type": row.gene_type_tx[0],
-                    "db_xref": row.db_xref_tx[0],
-                    "num_samples": row.num_samples_tx[0],
-                    "max_tpm": row.max_tpm_tx[0]
+                    "db_xref": row.db_xref,
+                    "num_samples": row.num_samples,
+                    "max_tpm": row.max_tpm
                 }
             ))
 
         syn_dict = {source: set() for source in row.source_ex}
 
         for i, ID in enumerate(row.start_ex):
-            syn_dict[row.source_ex[i]].add(row.db_xref_tx)
+            syn_dict[row.source_ex[i]].add(row.db_xref)
             syn_dict[row.source_ex[i]].add(transcript_id)
 
         synonym_dict[transcript_idx] = syn_dict
 
-        transcript_exon_map[transcript_id] = []
+        transcript_exon_map[transcript_idx] = []
         for (exon_num, exon_id) in exon_ids:
-            transcript_exon_map[transcript_id].append((exon_num, exon_id))
+            transcript_exon_map[transcript_idx].append((exon_num, exon_id))
 
     # Bulk update existing records
     if gene_update_entries:
@@ -2003,7 +2028,6 @@ def load_chess_transcript_exons(session: Session, transcript_exon_map: Dict[str,
     
     transcript_exons = []
 
-    # Get existing relationships using SQLAlchemy 2.0 style
     stmt = select(TranscriptExon)
     existing_entries = {
         (te.transcript_id, te.exon_id, te.exon_number) 
@@ -2025,7 +2049,6 @@ def load_chess_transcript_exons(session: Session, transcript_exon_map: Dict[str,
             attrs={'mapping_source': 'CHESS'}
         ))
         
-    # Bulk insert new transcript-exon relationships
     if transcript_exons:
         session.bulk_save_objects(transcript_exons)
         session.commit()
@@ -2088,10 +2111,10 @@ def load_chess_cds(session: Session, cds_gff_df: pd.DataFrame) -> None:
                 ensembl_id='',
                 refseq_id='',
                 chess_id=chess_id,
-                velia_id='',
-                model_evidence='',
-                gene_type='',
-                transcript_type=''
+                velia_id='',    
+                attrs={
+                    "db_xref": row.db_xref
+                }
             ))
 
         syn_dict = {source: set() for source in row.source}
@@ -2129,15 +2152,35 @@ def load_chess_cds(session: Session, cds_gff_df: pd.DataFrame) -> None:
         for d in session.execute(stmt).scalars().all()
     }
 
+    stmt = select(SequenceRegionXref)
+    existing_xrefs = {
+        (x.sequence_region_id, x.xref, x.type, x.sequence_region_dataset_id, x.xref_dataset_id)
+        for x in session.execute(stmt).scalars().all()
+    }
+
     # Prepare xrefs for bulk insert
     cds_xrefs = []
     for idx, synonym_entries in synonym_dict.items():
+        cds_id = vdb_cds_idx_map[idx]
         for dataset_name, synonyms in synonym_entries.items():
             for synonym in synonyms:
                 if not synonym:
                     continue
+                    
+                xref_tuple = (
+                    cds_id,
+                    synonym,
+                    'synonym',
+                    dataset_ids['CHESS'],
+                    dataset_ids[dataset_name]
+                )
+                
+                # Skip if this combination already exists
+                if xref_tuple in existing_xrefs:
+                    continue
+                    
                 cds_xrefs.append(SequenceRegionXref(
-                    sequence_region_id=vdb_cds_idx_map[idx],
+                    sequence_region_id=cds_id,
                     xref=synonym,
                     type='synonym',
                     sequence_region_dataset_id=dataset_ids['CHESS'],
@@ -2245,16 +2288,16 @@ def load_gencode_lncRNA_genes(session, gene_gff_df):
     logging.info(f'Added {len(gene_xrefs)} GENCODE lncRNA synonyms')
 
 
-def load_bigprot_orfs(session, bigprot_dir):
+def load_bigprot_orfs(session: Session, bigprot_dir: Path) -> None:
     """Load BigProt ORF entries from a CSV file.
 
     Args:
         session: SQLAlchemy session object
-        bigprot_dir (Path): Directory containing BigProt files
+        bigprot_dir: Directory containing BigProt files
     """
     chunk_size = 600000
     bigprot_csv = bigprot_dir.joinpath(
-        'orfset_v0.9.3_full_minlen_15_maxlen_999999999_orfs.csv.gz'
+        'orfset_BigProt_minlen_15_maxlen_999999999_orfs.csv.gz'
     )
 
     reader = pd.read_csv(bigprot_csv, chunksize=chunk_size)
@@ -2265,27 +2308,35 @@ def load_bigprot_orfs(session, bigprot_dir):
 
         for _, row in chunk.iterrows():
             orfs.append(Orf(
-                row.start, row.end, row.strand, row.assembly_id,
-                row.block_sizes, row.chrom_starts, row.phases, 
-                row.exon_frames, row.orf_idx, row.orf_idx_str,
-                row.secondary_orf_id, row.aa_seq, '',
-                '', '', '', id=row.id
+                start=row.start,
+                end=row.end,
+                strand=row.strand,
+                assembly_id=row.assembly_id,
+                block_sizes=row.block_sizes,
+                chrom_starts=row.chrom_starts,
+                phases=row.phases,
+                reading_frames=row.exon_frames,
+                orf_idx=row.orf_idx,
+                orf_idx_str=row.orf_idx_str,
+                secondary_orf_id=row.secondary_orf_id,
+                aa_seq=row.aa_seq,
+                id=row.id
             ))
         
-        session.add_all(orfs)
+        session.bulk_save_objects(orfs)
         session.commit()
 
 
-def load_bigprot_transcripts(session, bigprot_dir):
+def load_bigprot_transcript_orfs(session: Session, bigprot_dir: Path) -> None:
     """Load BigProt transcript entries from a CSV file.
 
     Args:
         session: SQLAlchemy session object
-        bigprot_dir (Path): Directory containing BigProt files
+        bigprot_dir: Directory containing BigProt files
     """
     chunk_size = 600000
     bigprot_csv = bigprot_dir.joinpath(
-        'orfset_v0.9.3_full_minlen_15_maxlen_999999999_transcript_orfs.csv.gz'
+        f'orfset_BigProt_minlen_15_maxlen_999999999_transcript_orfs.csv.gz'
     )
 
     reader = pd.read_csv(bigprot_csv, chunksize=chunk_size)
@@ -2294,26 +2345,26 @@ def load_bigprot_transcripts(session, bigprot_dir):
         tx_orfs = []
 
         for _, row in chunk.iterrows():
-            tx_orfs.append(
-                TranscriptOrf(row['transcript_orf.transcript_id'],
-                                   row['transcript_orf.orf_id'],
-                                   row['transcript_orf.evidence_tag']
-                               ))
+            tx_orfs.append(TranscriptOrf(
+                transcript_id=row['transcript_orf.transcript_id'],
+                orf_id=row['transcript_orf.orf_id'],
+                evidence_tag=row['transcript_orf.evidence_tag']
+            ))
         
-        session.add_all(tx_orfs)
+        session.bulk_save_objects(tx_orfs)
         session.commit()
 
 
-def load_bigprot_cds_orf(session, bigprot_dir):
+def load_bigprot_cds_orf(session: Session, bigprot_dir: Path) -> None:
     """Load BigProt CDS ORF entries from a CSV file.
 
     Args:
         session: SQLAlchemy session object
-        bigprot_dir (Path): Directory containing BigProt files
+        bigprot_dir: Directory containing BigProt files
     """
     chunk_size = 500000
     bigprot_csv = bigprot_dir.joinpath(
-        'orfset_v0.9.3_full_minlen_15_maxlen_999999999_cds_orfs.csv.gz'
+        f'orfset_BigProt_minlen_15_maxlen_999999999_cds_orfs.csv.gz'
     )
 
     reader = pd.read_csv(bigprot_csv, chunksize=chunk_size)
@@ -2323,14 +2374,14 @@ def load_bigprot_cds_orf(session, bigprot_dir):
 
         for _, row in chunk.iterrows():
             cds_orfs.append(CdsOrf(
-                row['cds_orf.cds_id'],
-                row['cds_orf.orf_id'],
-                row['cds_orf.cds_number'],
-                row['cds_orf.phase'],
-                row['cds_orf.reading_frame']
+                cds_id=row['cds_orf.cds_id'],
+                orf_id=row['cds_orf.orf_id'],
+                cds_number=row['cds_orf.cds_number'],
+                phase=row['cds_orf.phase'],
+                reading_frame=row['cds_orf.reading_frame']
             ))
         
-        session.add_all(cds_orfs)
+        session.bulk_save_objects(cds_orfs)
         session.commit()
 
 

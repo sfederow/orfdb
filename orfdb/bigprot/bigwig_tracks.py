@@ -11,7 +11,7 @@ from typing import Dict, List, Set, Tuple
 import numpy as np
 import pyBigWig
 
-import orf_finding.misc
+import orfdb.bigprot.misc
 from . import coordinates
 from . import validation
 

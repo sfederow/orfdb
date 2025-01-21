@@ -12,7 +12,7 @@ import Bio
 import Bio.Seq
 import Bio.SeqIO
 
-from orf_finding import misc, coordinates, validation, orf_classes, constants
+from orfdb.bigprot import misc, coordinates, validation, orf_classes, constants
 
 logger = logging.getLogger(__name__)
 
@@ -220,6 +220,7 @@ def extract_transcript_sequence_from_genome(transcript_dict: dict, genome_dict: 
         chrom_starts = [full_interval.python_start]
         block_sizes = [full_interval.python_size]
         source_coordinate_system = 'python'
+
 
     extracted_sequence = extract_sequence(
         parent_seq=genome_dict[transcript_dict[f'assembly.{accession_namespace}_accession']],

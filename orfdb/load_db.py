@@ -6,9 +6,7 @@ This script handles the loading of various annotation sources into the ORF datab
 including GENCODE, RefSeq, CHESS, OpenProt, and custom ORF annotations.
 """
 
-import logging
-import time
-import sys
+import logging, re, sys, time
 from pathlib import Path
 from typing import Optional
 
@@ -54,6 +52,27 @@ def configure_logger(
         logging.getLogger('').addHandler(console)
 
 
+def bump_version(version: str) -> str:
+    """
+    Bumps the patch version by 1 for a semantic version string (e.g., v0.9.3 -> v0.9.4).
+    
+    Args:
+        version (str): The version string to bump (e.g., 'v0.9.3').
+    
+    Returns:
+        str: The bumped version string.
+    """
+    # Match versions like v0.9.3
+    match = re.match(r"^(v?)(\d+)\.(\d+)\.(\d+)$", version)
+    if not match:
+        raise ValueError(f"Invalid version format: {version}")
+    
+    prefix, major, minor, patch = match.groups()
+    # Increment the patch number
+    bumped_version = f"{prefix}{major}.{minor}.{int(patch) + 1}"
+    return bumped_version
+
+
 @click.command()
 @click.option('--drop-all', is_flag=True, help='Empty database and reload data.')
 def load_db(drop_all: bool) -> None:
@@ -89,10 +108,10 @@ def load_db(drop_all: bool) -> None:
         #load_refseq_gff(session, settings.refseq_directory)
 
         logging.info('Loading CHESS')
-        load_chess_gff(session, settings.chess_directory)
+        #load_chess_gff(session, settings.chess_directory)
 
         logging.info('Loading BigProt')
-        #load_bigprot_tables(session, settings.bigprot_directory)
+        load_bigprot_tables(session, settings.bigprot_directory)
 
         logging.info('Updating ensembl <-> refseq gene mappings')
         #annotation_updates.update_chess_transcript_ids(
@@ -345,6 +364,8 @@ def load_refseq_gff(session, refseq_dir):
         lambda x: int(assembly_ids.get(x, -1))
     )
 
+    refseq_df = refseq_df[refseq_df['assembly_id'] != -1].copy()
+
     # Filter dataframes by type
     gene_gff_df = refseq_df[refseq_df['type'] == 'gene'].copy()
     tx_gff_df = refseq_df[refseq_df['type'].isin(
@@ -434,7 +455,7 @@ def load_chess_gff(session, chess_dir):
         lambda x: int(assembly_ids.get(x, -1))
     )
 
-    print(chess_df.head())
+    chess_df = chess_df[chess_df['assembly_id'] != -1].copy()
 
     # Create dataset
     chess_dataset = base.upsert(
@@ -472,62 +493,73 @@ def load_chess_gff(session, chess_dir):
     annotation_loading.load_chess_exons(session, exon_gff_df)
     
     logging.info('Loading CHESS transcripts')
-    #transcript_exon_map = annotation_loading.load_chess_transcripts(
-    #    session, tx_gff_df, exon_gff_df)
+    transcript_exon_map = annotation_loading.load_chess_transcripts(
+        session, tx_gff_df, exon_gff_df)
 
     logging.info('Loading CHESS transcrips <-> exons')
-    #annotation_loading.load_chess_transcript_exons(
-    #    session, transcript_exon_map)
+    annotation_loading.load_chess_transcript_exons(
+        session, transcript_exon_map)
 
     logging.info('Loading CHESS CDS')
-    #annotation_loading.load_chess_cds(session, cds_gff_df)
+    annotation_loading.load_chess_cds(session, cds_gff_df)
 
 
-def load_bigprot_tables(session, bigprot_dir):
+def load_bigprot_tables(session, bigprot_dir, overwrite=False):
     """Load BigProt tables from the given directory.
 
     Args:
         session: SQLAlchemy session object
         bigprot_dir (Path): Directory containing BigProt files
     """
+    bigprot_version = 'v0.9.4' #bump_version(settings.bigprot_version)
+    bigprot_dir = bigprot_dir.joinpath(bigprot_version)
 
     required_files = [
-        'orfset_v0.9.3_full_minlen_15_maxlen_999999999_orfs.csv.gz',
-        'orfset_v0.9.3_full_minlen_15_maxlen_999999999_transcript_orfs.csv.gz',
-        'orfset_v0.9.3_full_minlen_15_maxlen_999999999_cds_orfs.csv.gz'
+        f'orfset_BigProt_minlen_15_maxlen_999999999_orfs.csv.gz',
+        f'orfset_BigProt_minlen_15_maxlen_999999999_transcript_orfs.csv.gz',
+        f'orfset_BigProt_minlen_15_maxlen_999999999_cds_orfs.csv.gz'
     ]
-    
+
     files_exist = all(
         bigprot_dir.joinpath(filename).exists() 
         for filename in required_files
     )
-    
+
+
+    print([bigprot_dir.joinpath(filename) 
+        for filename in required_files])
+    print(files_exist)
     if not files_exist:
         logging.info('BigProt analysis files missing, running analysis...')
-        try:
-            from orfdb.bigprot.find_orfs import perform_analysis
-            perform_analysis(
-                output=str(bigprot_dir),
-                verbose=True,
-                dataset_name='BigProt',
-                genome_fasta_fpath=str(settings.genomes_directory.joinpath(
-                    'hg38', 'GRCh38.p13.genome.fa.gz')),
-                db_settings_fpath=str(Path(__file__).parent.parent / 'settings.ini'),
-                gtf_file_fpath=str(bigprot_dir.joinpath(
-                    'gencode.v42.chr_patch_hapl_scaff.annotation.expanded.gff3')),
-                min_codon_length=15,
-                max_codon_length=999999999
-            )
-        except Exception as e:
-            logging.error(f'Failed to run BigProt analysis: {str(e)}')
-            return
+        #try:
+        from orfdb.bigprot.find_orfs import perform_analysis
+        perform_analysis(
+            output=str(bigprot_dir),
+            verbose=False,
+            dataset_name='BigProt',
+            genome_fasta_fpath=str(settings.genomes_directory.joinpath(
+                'hg38', 'GCA_000001405.28_GRCh38.p13_genomic.fna.gz')),
+            db_settings_fpath=str(Path(__file__).parent.parent / 'settings.ini'),
+            #gtf_file_fpath=str(settings.gencode_directory.joinpath(
+            #    'v42', 'gencode.v42.chr_patch_hapl_scaff.annotation.expanded.gff3')),
+            min_codon_length=15,
+            max_codon_length=999999999,
+            skip_annotation=True,
+            transcript_chunk_size=1000,
+            max_chunks=1000,
+            num_processes=10,
+            accession_namespace='genbank',
+        )
+        #except Exception as e:
+        #    logging.error(f'Failed to run BigProt analysis: {str(e)}')
+       #     return
     
     try:
         logging.info('Loading BigProt ORFs')
         annotation_loading.load_bigprot_orfs(session, bigprot_dir)
         
         logging.info('Loading BigProt transcripts')
-        annotation_loading.load_bigprot_transcripts(session, bigprot_dir)
+        annotation_loading.load_bigprot_transcript_orfs(session, bigprot_dir)
         
         logging.info('Loading BigProt CDS-ORF mappings')
         annotation_loading.load_bigprot_cds_orf(session, bigprot_dir)

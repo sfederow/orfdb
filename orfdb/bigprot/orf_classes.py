@@ -2,7 +2,7 @@ import gzip
 import json
 import os
 import logging
-from orf_finding import validation
+from orfdb.bigprot import validation
 import Bio.Seq
 from typing import Dict, List, Union
 

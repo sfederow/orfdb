@@ -12,7 +12,7 @@ import Bio.SeqIO
 import Bio.SeqRecord
 import intervaltree
 
-from orf_finding.orf_classes import OrfBase
+from orfdb.bigprot.orf_classes import OrfBase
 from . import annotation
 from . import bigwig_tracks
 from . import constants
@@ -191,8 +191,6 @@ def _find_orfs_mp_worker(params: Tuple[Bio.SeqIO.SeqRecord, str, int, int, List[
 def call_and_annotate_orfs(transcripts_by_id: Dict[str, Dict[str, Any]],
                            genome: Dict[str, str],
                            output_prefix: str,
-                           phylocsf_tracks: List[bigwig_tracks.BwTracks],
-                           snp_intervals_by_chrom: Dict[str, intervaltree.IntervalTree],
                            exons_by_transcript: Dict[str, Dict[int, List[Dict[str, Any]]]],
                            cdss_by_exon: Dict[str, List[Dict[str, Any]]],
                            skip_annotation: bool = False,
@@ -216,10 +214,6 @@ def call_and_annotate_orfs(transcripts_by_id: Dict[str, Dict[str, Any]],
         Associates chromosome names with their corresponding sequences.
     output_prefix : str
         Specifies the prefix for all generated output files.
-    phylocsf_tracks : List[bigwig_tracks.BwTracks]
-        Lists PhyloCSF tracks to be used for ORF annotation based on evolutionary conservation.
-    snp_intervals_by_chrom : Dict[str, intervaltree.IntervalTree]
-        Maps chromosome names to IntervalTrees containing SNP intervals, for assessing genetic variation.
     exons_by_transcript : Dict[str, Dict[int, List[Dict[str, Any]]]]
         Maps transcript IDs to their exons, facilitating detailed ORF annotation.
     cdss_by_exon : Dict[str, List[Dict[str, Any]]]
@@ -314,7 +308,6 @@ def call_and_annotate_orfs(transcripts_by_id: Dict[str, Dict[str, Any]],
         current_orf_id, this_orf_table_chunk, this_supplemental_orf_table_chunk, this_transcript_orf_table_chunk, this_cds_orf_table_chunk = annotation.annotate_orfs(
             current_orf_id=current_orf_id,
             transcript_orfs=this_chunk_orfs,
-            phylocsf_tracks=phylocsf_tracks,
             transcripts_by_id=transcripts_by_id,
             transcript_seq_strands_by_id=transcript_seq_strands_by_id, genome=genome,
             orf_ids_by_idx_str=orf_ids_by_idx_str,
@@ -323,7 +316,6 @@ def call_and_annotate_orfs(transcripts_by_id: Dict[str, Dict[str, Any]],
             cds_orf_linkages=cds_orf_linkages,
             kozak_upstream_pssm=kozak_upstream_pssm,
             kozak_downstream_pssm=kozak_downstream_pssm,
-            snp_intervals_by_chrom=snp_intervals_by_chrom,
             phase_style=phase_style,
             accession_namespace=accession_namespace,
             skip_annotation=skip_annotation) 

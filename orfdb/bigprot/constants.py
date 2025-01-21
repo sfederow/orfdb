@@ -22,7 +22,7 @@ DEFAULT_PHYLO_CSF_TRACKSET_NAMES = ['phylocsf_primates']
 
 DEFAULT_GENBANK_FASTA_FPATH = '/home/ubuntu/data/hg38_genbank/GCA_000001405.28_GRCh38.p13_genomic.fna.gz'
 
-DEFAULT_VELIADB_SETTINGS_FPATH = '../veliadb/settings.ini'
+DEFAULT_VELIADB_SETTINGS_FPATH = '/home/ubuntu/orfdb/settings.ini'
 
 GFF_FIELDS = ['seqname', 'source', 'feature', 'start',
               'end', 'score', 'strand', 'frame', 'attribute']

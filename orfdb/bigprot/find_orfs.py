@@ -9,20 +9,20 @@ The output is logged in a specified output path.
 import argparse
 import gzip
 import logging
-import os
+import os, re
 import sys
 from typing import List
 
 import Bio.SeqIO
 from tqdm import tqdm
 
-from orf_finding import bigwig_tracks
-from orf_finding import constants
-from orf_finding import db_utils
-from orf_finding import gwas_tools
-from orf_finding import gff_tools
-from orf_finding import orf_calling
-from orf_finding import _version
+from orfdb.bigprot import bigwig_tracks
+from orfdb.bigprot import constants
+from orfdb.bigprot import db_utils
+from orfdb.bigprot import gwas_tools
+from orfdb.bigprot import gff_tools
+from orfdb.bigprot import orf_calling
+from orfdb import settings
 
 logger = logging.Logger('placeholder')
 
@@ -131,14 +131,31 @@ def setup_argparser() -> argparse.Namespace:
     return args
 
 
+def bump_version(version: str) -> str:
+    """
+    Bumps the patch version by 1 for a semantic version string (e.g., v0.9.3 -> v0.9.4).
+    
+    Args:
+        version (str): The version string to bump (e.g., 'v0.9.3').
+    
+    Returns:
+        str: The bumped version string.
+    """
+    # Match versions like v0.9.3
+    match = re.match(r"^(v?)(\d+)\.(\d+)\.(\d+)$", version)
+    if not match:
+        raise ValueError(f"Invalid version format: {version}")
+    
+    prefix, major, minor, patch = match.groups()
+    # Increment the patch number
+    bumped_version = f"{prefix}{major}.{minor}.{int(patch) + 1}"
+    return bumped_version
+
+
 def perform_analysis(output: str,
                      dataset_name: str,
                      genome_fasta_fpath: str,
                      db_settings_fpath: str,
-                     gtf_file_fpath: str,
-                     gwas_associations_fpath: str,
-                     phylocsf_globs: List[str],
-                     phylocsf_trackset_names: List[str],
                      skip_annotation: bool,
                      min_codon_length: int,
                      max_codon_length: int,
@@ -156,9 +173,6 @@ def perform_analysis(output: str,
         dataset_name (str): The name identifying the dataset being analyzed.
         genome_fasta_fpath (str): The file path to the FASTA file containing genomic sequences.
         db_settings_fpath (str): The file path to the database settings file (settings.ini) with configuration details.
-        gwas_associations_fpath (str): The file path to a TSV file with SNP associations, if provided.
-        phylocsf_globs (List[str]): The glob patterns for finding PhyloCSF bigwig tracks for analysis.
-        phylocsf_trackset_names (List[str]): The names assigned to the PhyloCSF tracksets, used in generating summary statistics.
         min_codon_length (int): The minimum codon length for identifying ORFs.
         max_codon_length (int): The maximum codon length for identifying ORFs.
         transcript_chunk_size (int): The size of chunks into which transcripts are divided for processing.
@@ -181,18 +195,19 @@ def perform_analysis(output: str,
         setup_logger(log_fpath=log_file_fpath,
                      verbosity=logging.INFO)
 
+
+    version = settings.bigprot_version
+    version = bump_version(version)
+
     # Log the function arguments
-    logger.info(f"Calling and annotating ORFs using big_prot version {_version.version} with the following arguments: "
+    logger.info(f"Calling and annotating ORFs using big_prot version {version} with the following arguments: "
                 f"output={output}, dataset_name={dataset_name}, genome_fasta_fpath={genome_fasta_fpath}, "
-                f"settings={db_settings_fpath}, gwas_associations_fpath={gwas_associations_fpath}, "
-                f"phylocsf_globs={phylocsf_globs}, phylocsf_trackset_names={phylocsf_trackset_names}, "
+                f"settings={db_settings_fpath}, "
                 f"min_codon_length={min_codon_length}, max_codon_length={max_codon_length}, "
                 f"transcript_chunk_size={transcript_chunk_size}, max_chunks={max_chunks}, num_processes={num_processes}, "
                 f"verbose={verbose}, skip_annotation={skip_annotation}, phase_style={phase_style}, "
                 f"accession_namespace={accession_namespace}.")
 
-    assert len(phylocsf_globs) == len(
-        phylocsf_trackset_names), "Number of phylocsf globs and trackset names must match"
 
     # Load the genome as a dictionary of Bio.SeqRecord objects keyed by accession. ToDo: Standardize on either SeqRecords or strings for sequences!
     logger.info(f'Loading genome sequences from {genome_fasta_fpath} ...')
@@ -205,14 +220,8 @@ def perform_analysis(output: str,
     cdss_by_exon = {}
 
     if db_settings_fpath is None:
-        # Load transcripts from GTF file. Currently this will skip the generation of cds_orf and transcript_exon tables.
-        logger.info(
-            'Loading and pre-processing exons in GTF file %s', gtf_file_fpath)
-        sparse_exon_gtf = gff_tools.load_and_preprocess_gtf(
-            gtf_fpath=gtf_file_fpath)
-        transcripts_by_id = {str(transcript['transcript.id']): transcript for transcript in gff_tools.generate_transcripts_from_gtf(
-            sparse_exon_gtf=sparse_exon_gtf, genome=genome, accession_namespace=accession_namespace)}
-        logger.info('Loaded %d transcripts.', len(transcripts_by_id))
+        logger.info('No DB settings file provided, skipping DB connection.')
+        
     else:
         # Load database tables
         logger.info('Connecting to DB defined in settings file %s',
@@ -251,27 +260,11 @@ def perform_analysis(output: str,
             cds_count += 1
         logger.info('Received %d CDSs.', cds_count)
 
-    snp_intervals_by_chrom = {}
-    phylocsf_tracks = []
-
-    if not skip_annotation:
-        if gwas_associations_fpath:
-            # Load the SNP associations
-            snp_intervals_by_chrom = gwas_tools.generate_snp_interval_trees(
-                gwas_tools.filter_snp_associations(gwas_tools.load_snp_associations(gwas_associations_fpath)))
-
-        # Load the phylocsf tracks
-        if phylocsf_globs:
-            phylocsf_tracks = [bigwig_tracks.BwTracks(glob_pattern, trackset_name) for glob_pattern, trackset_name in zip(
-                phylocsf_globs, phylocsf_trackset_names)]
-
     orf_calling.call_and_annotate_orfs(transcripts_by_id=transcripts_by_id,
                                        genome=genome,
                                        output_prefix=output_prefix,
-                                       phylocsf_tracks=phylocsf_tracks,
                                        exons_by_transcript=exons_by_transcript,
                                        cdss_by_exon=cdss_by_exon,
-                                       snp_intervals_by_chrom=snp_intervals_by_chrom,
                                        skip_annotation=skip_annotation,
                                        min_codon_length=min_codon_length,
                                        max_codon_length=max_codon_length,
@@ -294,9 +287,6 @@ def main() -> None:
                      genome_fasta_fpath=args.fasta_file,
                      db_settings_fpath=args.db_settings,
                      gtf_file_fpath=args.gtf_file,
-                     gwas_associations_fpath=args.gwas_associations_fpath,
-                     phylocsf_globs=args.phylocsf_globs,
-                     phylocsf_trackset_names=args.phylocsf_trackset_names,
                      skip_annotation=args.skip_annotation,
                      min_codon_length=args.min_codon_length,
                      max_codon_length=args.max_codon_length,

@@ -28,6 +28,8 @@ setup(
         'biopython',
         'sqlalchemy-batch-inserts',
         'seqmap',
+        'tqdm',
+        'intervaltree',
     ],
     entry_points = {
         'console_scripts': ['orfdb_load=orfdb.load_db:load_db'],

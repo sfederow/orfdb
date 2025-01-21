@@ -170,31 +170,6 @@ def populate_velia_db_fields_orf(orf_object: orf_classes.OrfBase,
     return orf_attributes, exon_indices, orf_cds_phases, orf_cds_frames
 
 
-def compute_phylocsf_stats(orf_dict: dict, parent_transcript_dict: dict, phylocsf_tracks: bigwig_tracks.BwTracks) -> \
-        dict[str, float]:
-    """
-    Computes the PhyloCSF statistics for an ORF.
-
-    Args:
-        orf_dict: The ORF dictionary.
-        parent_transcript_dict: The parent transcript dictionary.
-        phylocsf_tracks: The PhyloCSF tracks.
-
-    Returns:
-        The PhyloCSF statistics for the ORF.
-    """
-    logger.debug('Computing PhyloCSF stats for ORF %s ...',
-                 orf_dict['orf.orf_idx_str'])
-    phylocsf_array = phylocsf_tracks.extract_orf_bw_vector(orf_dict=orf_dict,
-                                                           parent_transcript_dict=parent_transcript_dict)
-    phylocsf_stats = phylocsf_tracks.compute_summary_stats(phylocsf_array)
-
-    logger.debug('Computed the following phylocsf stats for ORF %s: %s',
-                 orf_dict['orf.orf_idx_str'], phylocsf_stats)
-
-    return phylocsf_stats
-
-
 def validate_orf(orf_object: orf_classes.OrfBase, parent_transcript: dict, genome: Dict[str, str], accession_namespace: str) -> None:
     """Validate ORF.
     This function validates the ORF by comparing the internal ORF sequence with the extracted ORF sequence from the genome.
@@ -294,13 +269,11 @@ def annotate_orfs(current_orf_id: int,
                   transcript_seq_strands_by_id: Dict[str, Tuple[str, str]],
                   orf_ids_by_idx_str: Dict[str, str],
                   genome: Dict[str, str],
-                  phylocsf_tracks: List[bigwig_tracks.BwTracks],
                   exons_by_transcript: Dict[str, Dict[int, List[Dict[str, Union[str, int, float]]]]],
                   cdss_by_exon: Dict[str, List[Dict[str, Union[str, int, float]]]],
                   cds_orf_linkages: Set[Tuple[str, str]],
                   kozak_upstream_pssm: Bio.motifs.matrix.PositionSpecificScoringMatrix,
                   kozak_downstream_pssm: Bio.motifs.matrix.PositionSpecificScoringMatrix,
-                  snp_intervals_by_chrom: Dict[str, intervaltree.IntervalTree],
                   phase_style=constants.DEFAULT_PHASE_STYLE,
                   accession_namespace=constants.DEFAULT_ACCESSION_NAMESPACE,
                   skip_annotation: bool = False,
@@ -316,12 +289,10 @@ def annotate_orfs(current_orf_id: int,
         transcripts_by_id (Dict[str, Dict[str, Union[str, int, float]]]): Maps transcript identifiers to their associated metadata, which may include a mix of strings, integers, and floats.
         transcript_seq_strands_by_id (Dict[str, Tuple[str, str]]): Maps transcript identifiers to tuples containing sequence data and strand orientation.
         genome (Dict[str, str]): A dictionary containing genome sequences indexed by their identifiers.
-        phylocsf_tracks (List[bigwig_tracks.BwTracks]): A list of PhyloCSF track objects for evolutionary conservation analysis.
         exons_by_transcript (Dict[str, Dict[int, List[Dict[str, Union[str, int, float]]]]]): Maps transcript identifiers to their corresponding exons, which are represented as dictionaries of mixed data types.
         cdss_by_exon (Dict[str, List[Dict[str, Union[str, int, float]]]]): Maps exon identifiers to their corresponding CDS entries, represented as dictionaries of mixed data types.
         kozak_upstream_pssm (Bio.motifs.matrix.PositionSpecificScoringMatrix): A scoring matrix for analyzing the upstream region of the Kozak sequence for translation initiation.
         kozak_downstream_pssm (Bio.motifs.matrix.PositionSpecificScoringMatrix): A scoring matrix for analyzing the downstream region of the Kozak sequence for translation initiation.
-        snp_intervals_by_chrom (Dict[str, intervaltree.IntervalTree]): Maps chromosome names to interval trees containing SNP positions for genetic variation analysis.
         accession_namespace (str): The accession namespace for the genome sequences.
 
     Returns:
@@ -375,24 +346,10 @@ def annotate_orfs(current_orf_id: int,
                                             'start_offset_from_transcript': orf_object.start_pos,
                                             }
 
-                    for phylocsf_track in phylocsf_tracks:
-                        supplemental_orf_row.update(
-                            compute_phylocsf_stats(orf_row, parent_transcript, phylocsf_track))
-
-                        supplemental_orf_row[f'{phylocsf_track.trackset_name}_vector'] = ';'.join(
-                            [str(val) for val in phylocsf_track.extract_orf_bw_vector(
-                                orf_dict=orf_row, parent_transcript_dict=parent_transcript)])
-
                     supplemental_orf_row['kozak_score'] = motif_tools.compute_kozak_score(
                         orf_object=orf_object, parent_transcript_seq=parent_transcript_seq,
                         kozak_upstream_pssm=kozak_upstream_pssm,
                         kozak_downstream_pssm=kozak_downstream_pssm)
-
-                    if snp_intervals_by_chrom:
-                        supplemental_orf_row['proximal_snps'] = ';'.join(
-                            gwas_tools.find_snps_near_transcript(transcript_dict=parent_transcript,
-                                                                 snp_intervals=snp_intervals_by_chrom))
-                    supplemental_orf_table_chunk.append(supplemental_orf_row)
 
                 current_orf_id += 1
 

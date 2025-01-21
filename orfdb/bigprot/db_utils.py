@@ -375,7 +375,6 @@ def get_exons(veliadb_config_fpath: str = constants.DEFAULT_VELIADB_SETTINGS_FPA
     return make_veliadb_query_engine(veliadb_config_fpath)(EXON_QUERY)
 
 
-
 def get_cdss(veliadb_config_fpath: str = constants.DEFAULT_VELIADB_SETTINGS_FPATH) -> list:
     """
     Gets all CDSs from the Veliadb database.
