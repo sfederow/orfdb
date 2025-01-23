@@ -4,7 +4,7 @@ OrfDB is a genomic annotation database that is designed to support open reading 
 
 ## Overview
 
-The OrfDB package provides a set of scripts and utilities to manage and load genomic data into a structured database. This package contains the code to load various annotation sources into the ORF database, including GENCODE, RefSeq, CHESS, and custom transcriptomes. A utility to generate all possible ORFs from a set of transcripts (BigProt written by Dylan Skola) is also contained within this package. The database design is inspired by COBRAdb and the Ensembl genome database.
+The OrfDB package provides a set of scripts and utilities to manage and load genomic data into a structured database (utilizing SQLAlchemy). This package contains the code to load various annotation sources into the ORF database, including GENCODE, RefSeq, CHESS, and custom transcriptomes. A utility to generate all possible ORFs from a set of transcripts (BigProt written by Dylan Skola) is also contained within this package. The database design is inspired by COBRAdb and the Ensembl genome database.
 
 ## Why OrfDB?
 
