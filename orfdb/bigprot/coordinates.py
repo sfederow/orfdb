@@ -5,7 +5,7 @@ a factory class for creating intervals of different types, and functions for con
 """
 import logging
 from abc import ABC, abstractmethod
-from typing import Dict, List, Tuple, Type, Union
+from typing import Dict, List, Tuple, Type, Union, Any
 
 from . import misc, orf_classes, validation, constants
 
@@ -352,7 +352,7 @@ class IntervalFactory:
     """
 
     @staticmethod
-    def make_interval(interval_type: str) -> Type[VeliaInterval | GffInterval | PythonInterval]:
+    def make_interval(interval_type: str) -> Type[Union[VeliaInterval, GffInterval, PythonInterval]]:
         """
         Create an interval of the specified type.
 
@@ -360,7 +360,7 @@ class IntervalFactory:
             interval_type (str): The type of interval to create.
 
         Returns:
-            BaseInterval: An interval of the specified type.
+            Type[Union[VeliaInterval, GffInterval, PythonInterval]]: An interval of the specified type.
         """
         validation.validate_coordinate_type(interval_type)
         if interval_type == 'gff':

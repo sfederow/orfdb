@@ -6,7 +6,7 @@ It includes classes for representing ORFs and sets of ORFs, and functions for fi
 import logging
 import multiprocessing
 from datetime import datetime
-from typing import List, Tuple, Iterable, Dict, Set, Collection, Any, Optional
+from typing import List, Tuple, Iterable, Dict, Set, Collection, Any, Optional, Union
 
 import Bio.SeqIO
 import Bio.SeqRecord
@@ -100,7 +100,7 @@ def find_orfs_in_seq_set(seq_strand_iterable: Iterable[Tuple[Bio.SeqIO.SeqRecord
                          max_codon_length: int = constants.DEFAULT_MAX_CODON_LENGTH,
                          start_codons: List[str] = None,
                          stop_codons: List[str] = None
-                         ) -> Dict[str | None, Set[OrfBase]]:
+                         ) -> Dict[Union[str, None], Set[OrfBase]]:
     """
     Find ORFs in a set of sequences.
 

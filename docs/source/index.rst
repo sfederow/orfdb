@@ -12,6 +12,7 @@ orfdb is a Python package for managing and analyzing Open Reading Frame (ORF) da
    modules/annotation_loading
    modules/settings
    modules/util
+   modules/bigprot
 
 Indices and tables
 ==================

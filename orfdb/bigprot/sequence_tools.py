@@ -6,7 +6,7 @@ nucleotide probabilities, codon counts and frequencies, extracting sequence bloc
 import collections
 import logging
 import typing
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Set, Union, Any, Tuple
 
 import Bio
 import Bio.Seq
@@ -136,11 +136,11 @@ def extract_seq_blocks(parent_seq: str, chrom_starts: list[int], block_sizes: li
 
 
 def extract_sequence(parent_seq: str,
-                     chrom_starts: list[int],
-                     block_sizes: list[int],
+                     chrom_starts: List[int],
+                     block_sizes: List[int],
                      strand: str,
-                     source_coordinate_system='gff',
-                     seq_record_id: str = '') -> str | Bio.SeqIO.SeqRecord:
+                     source_coordinate_system: str = 'gff',
+                     seq_record_id: str = '') -> Union[str, Bio.SeqIO.SeqRecord]:
     """
     Extract a sequence from a parent sequence given start positions, block sizes, and strand.
 
@@ -161,7 +161,7 @@ def extract_sequence(parent_seq: str,
 
     Returns
     -------
-    str | Bio.SeqIO.SeqRecord
+    Union[str, Bio.SeqIO.SeqRecord]
         The extracted sequence.
     """
     validation.validate_strand(strand)
@@ -182,9 +182,9 @@ def extract_sequence(parent_seq: str,
         return full_seq
 
 
-def extract_transcript_sequence_from_genome(transcript_dict: dict, genome_dict: dict[str, str], seq_record_id: str = '',
+def extract_transcript_sequence_from_genome(transcript_dict: Dict, genome_dict: Dict[str, str], seq_record_id: str = '',
                                             source_coordinate_system: str = constants.TRANSCRIPT_COORDINATE_SYSTEM,
-                                            accession_namespace: str = constants.DEFAULT_ACCESSION_NAMESPACE) -> str | Bio.SeqIO.SeqRecord:
+                                            accession_namespace: str = constants.DEFAULT_ACCESSION_NAMESPACE) -> Union[str, Bio.SeqIO.SeqRecord]:
     """
     Extract a transcript sequence from a genome given a transcript dictionary and a genome dictionary.
 
@@ -203,7 +203,7 @@ def extract_transcript_sequence_from_genome(transcript_dict: dict, genome_dict: 
 
     Returns
     -------
-    str
+    Union[str, Bio.SeqIO.SeqRecord]
         The extracted transcript sequence.
     """
     logger.debug('Extracting genomic sequence of transcript %s ...',
@@ -379,3 +379,19 @@ def find_internal_stop_codons(orf_dict: Dict, genome: Dict, stop_codons: Optiona
             internal_stop_codons.append((codon_idx, codon))
 
     return internal_stop_codons
+
+
+def get_sequence_record(
+    sequence: str,
+    seq_record_id: str = ''
+) -> Union[str, Bio.SeqIO.SeqRecord]:
+    """Get sequence record from string."""
+    # ... rest of the function ...
+
+
+def get_sequence_from_fasta(
+    fasta_fpath: str,
+    accession_namespace: str = constants.DEFAULT_ACCESSION_NAMESPACE
+) -> Union[str, Bio.SeqIO.SeqRecord]:
+    """Get sequence from FASTA file."""
+    # ... rest of the function ...
