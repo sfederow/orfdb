@@ -1,0 +1,534 @@
+
+
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" data-content_root="../../../">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>orfdb.bigprot.db_utils &mdash; orfdb 1.0 documentation</title>
+      <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css?v=b86133f3" />
+      <link rel="stylesheet" type="text/css" href="../../../_static/css/theme.css?v=e59714d7" />
+
+  
+      <script src="../../../_static/jquery.js?v=5d32c60e"></script>
+      <script src="../../../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+      <script src="../../../_static/documentation_options.js?v=f2a433a1"></script>
+      <script src="../../../_static/doctools.js?v=9a2dae69"></script>
+      <script src="../../../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script src="../../../_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="../../../genindex.html" />
+    <link rel="search" title="Search" href="../../../search.html" /> 
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="../../../index.html" class="icon icon-home">
+            orfdb
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="../../../search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">Contents:</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../modules/base.html">Base Module</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../modules/load_db.html">Database Loading Module</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../modules/annotation_loading.html">Annotation Loading Module</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../modules/settings.html">Settings Module</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../modules/util.html">Utilities Module</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../modules/bigprot.html">BigProt Module</a></li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../../../index.html">orfdb</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="../../../index.html" class="icon icon-home" aria-label="Home"></a></li>
+          <li class="breadcrumb-item"><a href="../../index.html">Module code</a></li>
+      <li class="breadcrumb-item active">orfdb.bigprot.db_utils</li>
+      <li class="wy-breadcrumbs-aside">
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <h1>Source code for orfdb.bigprot.db_utils</h1><div class="highlight"><pre>
+<span></span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">This module provides utilities for interacting with the database.</span>
+<span class="sd">&quot;&quot;&quot;</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">configparser</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">logging</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">psycopg2</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">.</span><span class="w"> </span><span class="kn">import</span> <span class="n">constants</span>
+
+<span class="n">logger</span> <span class="o">=</span> <span class="n">logging</span><span class="o">.</span><span class="n">getLogger</span><span class="p">(</span><span class="vm">__name__</span><span class="p">)</span>
+<span class="n">ORF_QUERY</span> <span class="o">=</span> <span class="s1">&#39;&#39;&#39;SELECT</span>
+<span class="s1">orf.aa_seq as &quot;orf.aa_seq&quot;,</span>
+<span class="s1">orf.assembly_id as &quot;orf.assembly_id&quot;,</span>
+<span class="s1">orf.attrs as &quot;orf.attrs&quot;,</span>
+<span class="s1">orf.benchling_id as &quot;orf.benchling_id&quot;,</span>
+<span class="s1">orf.block_sizes as &quot;orf.block_sizes&quot;,</span>
+<span class="s1">orf.chrom_starts as &quot;orf.chrom_starts&quot;,</span>
+<span class="s1">orf.end as &quot;orf.end&quot;,</span>
+<span class="s1">orf.ensembl_protein_id as &quot;orf.ensembl_protein_id&quot;,</span>
+<span class="s1">orf.id as &quot;orf.id&quot;,</span>
+<span class="s1">orf.nt_seq as &quot;orf.nt_seq&quot;,</span>
+<span class="s1">orf.openprot_id as &quot;orf.openprot_id&quot;,</span>
+<span class="s1">orf.orf_idx as &quot;orf.orf_idx&quot;,</span>
+<span class="s1">orf.orf_idx_str as &quot;orf.orf_idx_str&quot;,</span>
+<span class="s1">orf.phases as &quot;orf.phases&quot;,</span>
+<span class="s1">orf.refseq_protein_id as &quot;orf.refseq_protein_id&quot;,</span>
+<span class="s1">orf.secondary_orf_id as &quot;orf.secondary_orf_id&quot;,</span>
+<span class="s1">orf.start as &quot;orf.start&quot;,</span>
+<span class="s1">orf.strand as &quot;orf.strand&quot;,</span>
+<span class="s1">orf.uniprot_id as &quot;orf.uniprot_id&quot;,</span>
+<span class="s1">orf.velia_id as &quot;orf.velia_id&quot;,</span>
+<span class="s1">transcript_orf.transcript_id as &quot;transcript_orf.transcript_id&quot;</span>
+<span class="s1">FROM orf</span>
+<span class="s1">LEFT JOIN transcript_orf on orf.id = transcript_orf.orf_id</span>
+<span class="s1">;&#39;&#39;&#39;</span>
+
+<span class="n">ORF_TRANSCRIPT_QUERY</span> <span class="o">=</span> <span class="s1">&#39;&#39;&#39;SELECT DISTINCT ON (assembly.ucsc_style_name, orf.orf_idx_str)</span>
+<span class="s1">assembly.assembly_unit as &quot;assembly.assembly_unit&quot;,</span>
+<span class="s1">assembly.assigned_molecule as &quot;assembly.assigned_molecule&quot;,</span>
+<span class="s1">assembly.assigned_molecule_location as &quot;assembly.assigned_molecule_location&quot;,</span>
+<span class="s1">assembly.attrs as &quot;assembly.attrs&quot;,</span>
+<span class="s1">assembly.genbank_accession as &quot;assembly.genbank_accession&quot;,</span>
+<span class="s1">assembly.genome_accession as &quot;assembly.genome_accession&quot;,</span>
+<span class="s1">assembly.id as &quot;assembly.id&quot;,</span>
+<span class="s1">assembly.refseq_accession as &quot;assembly.refseq_accession&quot;,</span>
+<span class="s1">assembly.sequence_length as &quot;assembly.sequence_length&quot;,</span>
+<span class="s1">assembly.sequence_role as &quot;assembly.sequence_role&quot;,</span>
+<span class="s1">assembly.ucsc_style_name as &quot;assembly.ucsc_style_name&quot;,</span>
+<span class="s1">orf.aa_seq as &quot;orf.aa_seq&quot;,</span>
+<span class="s1">orf.assembly_id as &quot;orf.assembly_id&quot;,</span>
+<span class="s1">orf.attrs as &quot;orf.attrs&quot;,</span>
+<span class="s1">orf.benchling_id as &quot;orf.benchling_id&quot;,</span>
+<span class="s1">orf.block_sizes as &quot;orf.block_sizes&quot;,</span>
+<span class="s1">orf.chrom_starts as &quot;orf.chrom_starts&quot;,</span>
+<span class="s1">orf.end as &quot;orf.end&quot;,</span>
+<span class="s1">orf.ensembl_protein_id as &quot;orf.ensembl_protein_id&quot;,</span>
+<span class="s1">orf.id as &quot;orf.id&quot;,</span>
+<span class="s1">orf.nt_seq as &quot;orf.nt_seq&quot;,</span>
+<span class="s1">orf.openprot_id as &quot;orf.openprot_id&quot;,</span>
+<span class="s1">orf.orf_idx as &quot;orf.orf_idx&quot;,</span>
+<span class="s1">orf.orf_idx_str as &quot;orf.orf_idx_str&quot;,</span>
+<span class="s1">orf.phases as &quot;orf.phases&quot;,</span>
+<span class="s1">orf.refseq_protein_id as &quot;orf.refseq_protein_id&quot;,</span>
+<span class="s1">orf.secondary_orf_id as &quot;orf.secondary_orf_id&quot;,</span>
+<span class="s1">orf.start as &quot;orf.start&quot;,</span>
+<span class="s1">orf.strand as &quot;orf.strand&quot;,</span>
+<span class="s1">orf.uniprot_id as &quot;orf.uniprot_id&quot;,</span>
+<span class="s1">orf.velia_id as &quot;orf.velia_id&quot;,</span>
+<span class="s1">transcript.assembly_id as &quot;transcript.assembly_id&quot;,</span>
+<span class="s1">transcript.attrs as &quot;transcript.attrs&quot;,</span>
+<span class="s1">transcript.block_sizes as &quot;transcript.block_sizes&quot;,</span>
+<span class="s1">transcript.chess_id as &quot;transcript.chess_id&quot;,</span>
+<span class="s1">transcript.chrom_starts as &quot;transcript.chrom_starts&quot;,</span>
+<span class="s1">transcript.end as &quot;transcript.end&quot;,</span>
+<span class="s1">transcript.ensembl_id as &quot;transcript.ensembl_id&quot;,</span>
+<span class="s1">transcript.gene_id as &quot;transcript.gene_id&quot;,</span>
+<span class="s1">transcript.id as &quot;transcript.id&quot;,</span>
+<span class="s1">transcript.refseq_id as &quot;transcript.refseq_id&quot;,</span>
+<span class="s1">transcript.start as &quot;transcript.start&quot;,</span>
+<span class="s1">transcript.strand as &quot;transcript.strand&quot;,</span>
+<span class="s1">transcript.support_level as &quot;transcript.support_level&quot;,</span>
+<span class="s1">transcript.transcript_idx as &quot;transcript.transcript_idx&quot;,</span>
+<span class="s1">transcript.transcript_idx_str as &quot;transcript.transcript_idx_str&quot;,</span>
+<span class="s1">transcript.velia_id as &quot;transcript.velia_id&quot;,</span>
+<span class="s1">transcript_orf.attrs as &quot;transcript_orf.attrs&quot;,</span>
+<span class="s1">transcript_orf.evidence_tag as &quot;transcript_orf.evidence_tag&quot;,</span>
+<span class="s1">transcript_orf.orf_id as &quot;transcript_orf.orf_id&quot;,</span>
+<span class="s1">transcript_orf.transcript_id as &quot;transcript_orf.transcript_id&quot;</span>
+<span class="s1">FROM orf JOIN assembly on orf.assembly_id = assembly.id</span>
+<span class="s1">JOIN transcript_orf on orf.id = transcript_orf.orf_id</span>
+<span class="s1">JOIN transcript on transcript_orf.transcript_id = transcript.id</span>
+<span class="s1">ORDER BY assembly.ucsc_style_name, orf_idx_str;&#39;&#39;&#39;</span>
+
+<span class="n">TRANSCRIPT_QUERY</span> <span class="o">=</span> <span class="s1">&#39;&#39;&#39;SELECT DISTINCT ON (transcript.id)</span>
+<span class="s1">transcript.id as &quot;transcript.id&quot;, </span>
+<span class="s1">transcript.start as &quot;transcript.start&quot;, </span>
+<span class="s1">transcript.end as &quot;transcript.end&quot;, </span>
+<span class="s1">transcript.strand as &quot;transcript.strand&quot;, </span>
+<span class="s1">transcript.chrom_starts as &quot;transcript.chrom_starts&quot;, </span>
+<span class="s1">transcript.block_sizes as &quot;transcript.block_sizes&quot;,</span>
+<span class="s1">transcript.ensembl_id as &quot;transcript.ensembl_id&quot;, </span>
+<span class="s1">transcript.refseq_id as &quot;transcript.refseq_id&quot;,</span>
+<span class="s1">transcript.transcript_type as &quot;transcript.transcript_type&quot;,</span>
+<span class="s1">assembly.id as &quot;assembly.id&quot;,</span>
+<span class="s1">assembly.genome_accession as &quot;assembly.genome_accession&quot;,</span>
+<span class="s1">assembly.ucsc_style_name as &quot;assembly.ucsc_style_name&quot;,</span>
+<span class="s1">assembly.genbank_accession as &quot;assembly.genbank_accession&quot;,</span>
+<span class="s1">assembly.sequence_length as &quot;assembly.sequence_length&quot;</span>
+<span class="s1">FROM transcript</span>
+<span class="s1">JOIN assembly ON assembly.id = transcript.assembly_id</span>
+<span class="s1">;&#39;&#39;&#39;</span>
+
+<span class="n">ASSEMBLY_QUERY</span> <span class="o">=</span> <span class="s1">&#39;&#39;&#39;SELECT</span>
+<span class="s1">assembly.id as &quot;assembly.id&quot;,</span>
+<span class="s1">assembly.genbank_accession as &quot;assembly.genbank_accession&quot;,</span>
+<span class="s1">assembly.ucsc_style_name as &quot;assembly.ucsc_style_name&quot;,</span>
+<span class="s1">assembly.refseq_accession as &quot;assembly.refseq_accession&quot;,</span>
+<span class="s1">assembly.sequence_length as &quot;assembly.sequence_length&quot;,</span>
+<span class="s1">assembly.sequence_role as &quot;assembly.sequence_role&quot;,</span>
+<span class="s1">assembly.assigned_molecule as &quot;assembly.assigned_molecule&quot;,</span>
+<span class="s1">assembly.assigned_molecule_location as &quot;assembly.assigned_molecule_location&quot;,</span>
+<span class="s1">assembly.assembly_unit as &quot;assembly.assembly_unit&quot;,</span>
+<span class="s1">assembly.attrs as &quot;assembly.attrs&quot;</span>
+<span class="s1">FROM assembly</span>
+<span class="s1">ORDER BY assembly.id;&#39;&#39;&#39;</span>
+
+<span class="n">CDS_QUERY</span> <span class="o">=</span> <span class="s1">&#39;&#39;&#39;SELECT</span>
+<span class="s1">cds.id as &quot;cds.id&quot;,</span>
+<span class="s1">cds.ensembl_id as &quot;cds.ensembl_id&quot;,</span>
+<span class="s1">cds.refseq_id as &quot;cds.refseq_id&quot;,</span>
+<span class="s1">cds.chess_id as &quot;cds.chess_id&quot;,</span>
+<span class="s1">cds.openprot_id as &quot;cds.openprot_id&quot;,</span>
+<span class="s1">cds.velia_id as &quot;cds.velia_id&quot;,</span>
+<span class="s1">cds.ccds_id as &quot;cds.ccds_id&quot;,</span>
+<span class="s1">cds.ensembl_protein_id as &quot;cds.ensembl_protein_id&quot;,</span>
+<span class="s1">cds.refseq_protein_id as &quot;cds.refseq_protein_id&quot;,</span>
+<span class="s1">cds.attrs as &quot;cds.attrs&quot;,</span>
+<span class="s1">exon_cds.exon_id as &quot;exon_cds.exon_id&quot;,</span>
+<span class="s1">exon_cds.cds_id as &quot;exon_cds.cds_id&quot;,</span>
+<span class="s1">exon_cds.attrs as &quot;exon_cds.attrs&quot;</span>
+<span class="s1">FROM cds JOIN exon_cds ON cds.id = exon_cds.cds_id;&#39;&#39;&#39;</span>
+
+<span class="n">EXON_QUERY</span> <span class="o">=</span> <span class="s1">&#39;&#39;&#39;SELECT</span>
+<span class="s1">exon.id as &quot;exon.id&quot;,</span>
+<span class="s1">exon.ensembl_id as &quot;exon.ensembl_id&quot;,</span>
+<span class="s1">exon.refseq_id as &quot;exon.refseq_id&quot;,</span>
+<span class="s1">exon.chess_id as &quot;exon.chess_id&quot;,</span>
+<span class="s1">exon.velia_id as &quot;exon.velia_id&quot;,</span>
+<span class="s1">exon.attrs as &quot;exon.attrs&quot;,</span>
+<span class="s1">transcript_exon.id as &quot;transcript_exon.id&quot;,</span>
+<span class="s1">transcript_exon.transcript_id as &quot;transcript_exon.transcript_id&quot;,</span>
+<span class="s1">transcript_exon.exon_id as &quot;transcript_exon.exon_id&quot;,</span>
+<span class="s1">transcript_exon.exon_number as &quot;transcript_exon.exon_number&quot;,</span>
+<span class="s1">transcript_exon.attrs as &quot;transcript_exon.attrs&quot;</span>
+<span class="s1">FROM exon JOIN transcript_exon ON exon.id = transcript_exon.exon_id;&#39;&#39;&#39;</span>
+
+
+<div class="viewcode-block" id="filter_transcript_dict">
+<a class="viewcode-back" href="../../../modules/bigprot.html#orfdb.bigprot.db_utils.filter_transcript_dict">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">filter_transcript_dict</span><span class="p">(</span><span class="n">transcripts_by_id</span><span class="p">:</span> <span class="nb">dict</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Filters out transcripts with empty chrom_starts or block_sizes. So far this only seems to occur with </span>
+<span class="sd">    PAR-located genes on chrY, which are problematic for other reasons as well.</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        transcripts_by_id (dict): A dictionary of transcripts.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        dict: A filtered dictionary of transcripts.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">filtered_transcripts</span> <span class="o">=</span> <span class="p">{</span><span class="n">tid</span><span class="p">:</span> <span class="n">transcript</span> <span class="k">for</span> <span class="n">tid</span><span class="p">,</span> <span class="n">transcript</span> <span class="ow">in</span> <span class="n">transcripts_by_id</span><span class="o">.</span><span class="n">items</span><span class="p">()</span> <span class="k">if</span>
+                            <span class="n">transcript</span><span class="p">[</span><span class="s1">&#39;transcript.chrom_starts&#39;</span><span class="p">]</span> <span class="ow">and</span> <span class="n">transcript</span><span class="p">[</span><span class="s1">&#39;transcript.block_sizes&#39;</span><span class="p">]}</span>
+    <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span>
+        <span class="s1">&#39;Removed </span><span class="si">%d</span><span class="s1"> transcripts, </span><span class="si">%d</span><span class="s1"> remain.&#39;</span><span class="p">,</span> <span class="nb">len</span><span class="p">(</span><span class="n">transcripts_by_id</span><span class="p">)</span> <span class="o">-</span> <span class="nb">len</span><span class="p">(</span><span class="n">filtered_transcripts</span><span class="p">),</span> <span class="nb">len</span><span class="p">(</span><span class="n">filtered_transcripts</span><span class="p">))</span>
+    <span class="k">return</span> <span class="n">filtered_transcripts</span></div>
+
+
+
+<div class="viewcode-block" id="describe_table">
+<a class="viewcode-back" href="../../../modules/bigprot.html#orfdb.bigprot.db_utils.describe_table">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">describe_table</span><span class="p">(</span><span class="n">db_connection</span><span class="p">,</span> <span class="n">table_name</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Describes a table in the database. Uses an empty query to get the column mames (since postgreSQL doesn&#39;t support &quot;DESCRIBE&quot;).</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        db_connection: The database connection.</span>
+<span class="sd">        table_name (str): The name of the table.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        list: A list of column names in the table.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">cur</span> <span class="o">=</span> <span class="n">db_connection</span><span class="o">.</span><span class="n">cursor</span><span class="p">()</span>
+    <span class="n">cur</span><span class="o">.</span><span class="n">execute</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;&quot;&quot;</span>
+<span class="s2">    SELECT * FROM</span>
+<span class="s2">    </span><span class="si">{</span><span class="n">table_name</span><span class="si">}</span>
+<span class="s2">    WHERE false;</span>
+<span class="s2">    &quot;&quot;&quot;</span><span class="p">)</span>
+
+    <span class="k">return</span> <span class="nb">list</span><span class="p">([</span><span class="n">col</span><span class="o">.</span><span class="n">name</span> <span class="k">for</span> <span class="n">col</span> <span class="ow">in</span> <span class="n">cur</span><span class="o">.</span><span class="n">description</span><span class="p">])</span></div>
+
+
+
+<div class="viewcode-block" id="fetch_one_as_dict">
+<a class="viewcode-back" href="../../../modules/bigprot.html#orfdb.bigprot.db_utils.fetch_one_as_dict">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">fetch_one_as_dict</span><span class="p">(</span><span class="n">cursor</span><span class="p">,</span> <span class="n">sort</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Fetches one row from the cursor as a dictionary.</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        cursor: The cursor to fetch from.</span>
+<span class="sd">        sort (bool): Whether to sort the dictionary. Defaults to True.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        dict: The fetched row as a dictionary.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="n">sort</span><span class="p">:</span>
+        <span class="k">return</span> <span class="p">{</span><span class="n">column</span><span class="o">.</span><span class="n">name</span><span class="p">:</span> <span class="n">value</span> <span class="k">for</span> <span class="n">column</span><span class="p">,</span> <span class="n">value</span> <span class="ow">in</span>
+                <span class="nb">sorted</span><span class="p">(</span><span class="nb">zip</span><span class="p">(</span><span class="n">cursor</span><span class="o">.</span><span class="n">description</span><span class="p">,</span> <span class="n">cursor</span><span class="o">.</span><span class="n">fetchone</span><span class="p">()),</span> <span class="n">key</span><span class="o">=</span><span class="k">lambda</span> <span class="n">t</span><span class="p">:</span> <span class="n">t</span><span class="p">[</span><span class="mi">0</span><span class="p">])}</span>
+    <span class="k">return</span> <span class="p">{</span><span class="n">column</span><span class="o">.</span><span class="n">name</span><span class="p">:</span> <span class="n">value</span> <span class="k">for</span> <span class="n">column</span><span class="p">,</span> <span class="n">value</span> <span class="ow">in</span> <span class="nb">zip</span><span class="p">(</span><span class="n">cursor</span><span class="o">.</span><span class="n">description</span><span class="p">,</span> <span class="n">cursor</span><span class="o">.</span><span class="n">fetchone</span><span class="p">())}</span></div>
+
+
+
+<div class="viewcode-block" id="fetch_all_as_dict">
+<a class="viewcode-back" href="../../../modules/bigprot.html#orfdb.bigprot.db_utils.fetch_all_as_dict">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">fetch_all_as_dict</span><span class="p">(</span><span class="n">cursor</span><span class="p">,</span> <span class="n">sort</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Fetches all rows from the cursor as a list of dictionaries.</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        cursor: The cursor to fetch from.</span>
+<span class="sd">        sort (bool): Whether to sort the dictionaries. Defaults to True.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        list: The fetched rows as a list of dictionaries.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">rows</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="k">for</span> <span class="n">row</span> <span class="ow">in</span> <span class="n">cursor</span><span class="o">.</span><span class="n">fetchall</span><span class="p">():</span>
+        <span class="k">if</span> <span class="n">sort</span><span class="p">:</span>
+            <span class="n">rows</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
+                <span class="p">{</span><span class="n">column</span><span class="o">.</span><span class="n">name</span><span class="p">:</span> <span class="n">value</span> <span class="k">for</span> <span class="n">column</span><span class="p">,</span> <span class="n">value</span> <span class="ow">in</span> <span class="nb">sorted</span><span class="p">(</span><span class="nb">zip</span><span class="p">(</span><span class="n">cursor</span><span class="o">.</span><span class="n">description</span><span class="p">,</span> <span class="n">row</span><span class="p">),</span> <span class="n">key</span><span class="o">=</span><span class="k">lambda</span> <span class="n">t</span><span class="p">:</span> <span class="n">t</span><span class="p">[</span><span class="mi">0</span><span class="p">])})</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">rows</span><span class="o">.</span><span class="n">append</span><span class="p">({</span><span class="n">column</span><span class="o">.</span><span class="n">name</span><span class="p">:</span> <span class="n">value</span> <span class="k">for</span> <span class="n">column</span><span class="p">,</span>
+                         <span class="n">value</span> <span class="ow">in</span> <span class="nb">zip</span><span class="p">(</span><span class="n">cursor</span><span class="o">.</span><span class="n">description</span><span class="p">,</span> <span class="n">row</span><span class="p">)})</span>
+    <span class="k">return</span> <span class="n">rows</span></div>
+
+
+
+<div class="viewcode-block" id="fetch_many_as_dict">
+<a class="viewcode-back" href="../../../modules/bigprot.html#orfdb.bigprot.db_utils.fetch_many_as_dict">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">fetch_many_as_dict</span><span class="p">(</span><span class="n">cursor</span><span class="p">,</span> <span class="n">size</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">sort</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Fetches many rows from the cursor as a list of dictionaries.</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        cursor: The cursor to fetch from.</span>
+<span class="sd">        size (int): The number of rows to fetch.</span>
+<span class="sd">        sort (bool): Whether to sort the dictionaries. Defaults to True.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        list: The fetched rows as a list of dictionaries.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">rows</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="k">for</span> <span class="n">row</span> <span class="ow">in</span> <span class="n">cursor</span><span class="o">.</span><span class="n">fetchmany</span><span class="p">(</span><span class="n">size</span><span class="o">=</span><span class="n">size</span><span class="p">):</span>
+        <span class="k">if</span> <span class="n">sort</span><span class="p">:</span>
+            <span class="n">rows</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
+                <span class="p">{</span><span class="n">column</span><span class="o">.</span><span class="n">name</span><span class="p">:</span> <span class="n">value</span> <span class="k">for</span> <span class="n">column</span><span class="p">,</span> <span class="n">value</span> <span class="ow">in</span> <span class="nb">sorted</span><span class="p">(</span><span class="nb">zip</span><span class="p">(</span><span class="n">cursor</span><span class="o">.</span><span class="n">description</span><span class="p">,</span> <span class="n">row</span><span class="p">),</span> <span class="n">key</span><span class="o">=</span><span class="k">lambda</span> <span class="n">t</span><span class="p">:</span> <span class="n">t</span><span class="p">[</span><span class="mi">0</span><span class="p">])})</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">rows</span><span class="o">.</span><span class="n">append</span><span class="p">({</span><span class="n">column</span><span class="o">.</span><span class="n">name</span><span class="p">:</span> <span class="n">value</span> <span class="k">for</span> <span class="n">column</span><span class="p">,</span>
+                         <span class="n">value</span> <span class="ow">in</span> <span class="nb">zip</span><span class="p">(</span><span class="n">cursor</span><span class="o">.</span><span class="n">description</span><span class="p">,</span> <span class="n">row</span><span class="p">)})</span>
+
+    <span class="k">return</span> <span class="n">rows</span></div>
+
+
+
+<div class="viewcode-block" id="get_config">
+<a class="viewcode-back" href="../../../modules/bigprot.html#orfdb.bigprot.db_utils.get_config">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">get_config</span><span class="p">(</span><span class="n">settings_fpath</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="n">constants</span><span class="o">.</span><span class="n">DEFAULT_VELIADB_SETTINGS_FPATH</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">configparser</span><span class="o">.</span><span class="n">ConfigParser</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Gets the database configuration from a settings file.</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        settings_fpath (str): The path to the settings file. Defaults to constants.DEFAULT_VELIADB_SETTINGS_FPATH.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        ConfigParser: The database configuration.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">settings_fpath</span><span class="p">,</span> <span class="s1">&#39;rt&#39;</span><span class="p">,</span> <span class="n">encoding</span><span class="o">=</span><span class="s1">&#39;utf-8&#39;</span><span class="p">)</span> <span class="k">as</span> <span class="n">settings_file</span><span class="p">:</span>
+        <span class="n">db_config</span> <span class="o">=</span> <span class="n">configparser</span><span class="o">.</span><span class="n">ConfigParser</span><span class="p">()</span>
+        <span class="n">db_config</span><span class="o">.</span><span class="n">read_file</span><span class="p">(</span><span class="n">settings_file</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">db_config</span></div>
+
+
+
+<div class="viewcode-block" id="connect">
+<a class="viewcode-back" href="../../../modules/bigprot.html#orfdb.bigprot.db_utils.connect">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">connect</span><span class="p">(</span><span class="n">db_config</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">]])</span> <span class="o">-&gt;</span> <span class="n">psycopg2</span><span class="o">.</span><span class="n">extensions</span><span class="o">.</span><span class="n">connection</span><span class="p">:</span>
+    <span class="k">return</span> <span class="n">psycopg2</span><span class="o">.</span><span class="n">connect</span><span class="p">(</span><span class="n">database</span><span class="o">=</span><span class="n">db_config</span><span class="p">[</span><span class="s1">&#39;DATABASE&#39;</span><span class="p">][</span><span class="s1">&#39;postgres_database&#39;</span><span class="p">],</span>
+                            <span class="n">host</span><span class="o">=</span><span class="n">db_config</span><span class="p">[</span><span class="s1">&#39;DATABASE&#39;</span><span class="p">][</span><span class="s1">&#39;postgres_host&#39;</span><span class="p">],</span>
+                            <span class="n">user</span><span class="o">=</span><span class="n">db_config</span><span class="p">[</span><span class="s1">&#39;DATABASE&#39;</span><span class="p">][</span><span class="s1">&#39;postgres_user&#39;</span><span class="p">],</span>
+                            <span class="n">password</span><span class="o">=</span><span class="n">db_config</span><span class="p">[</span><span class="s1">&#39;DATABASE&#39;</span><span class="p">][</span><span class="s1">&#39;postgres_password&#39;</span><span class="p">],</span>
+                            <span class="n">port</span><span class="o">=</span><span class="n">db_config</span><span class="p">[</span><span class="s1">&#39;DATABASE&#39;</span><span class="p">][</span><span class="s1">&#39;postgres_port&#39;</span><span class="p">])</span></div>
+
+
+
+<div class="viewcode-block" id="query_engine_factory">
+<a class="viewcode-back" href="../../../modules/bigprot.html#orfdb.bigprot.db_utils.query_engine_factory">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">query_engine_factory</span><span class="p">(</span><span class="n">database</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">host</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">user</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">password</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">port</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">callable</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Creates a query engine for executing queries on the database.</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        database (str): The name of the database.</span>
+<span class="sd">        host (str): The host of the database.</span>
+<span class="sd">        user (str): The user for the database.</span>
+<span class="sd">        password (str): The password for the database.</span>
+<span class="sd">        port (str): The port for the database.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        function: A function that executes queries on the database and returns the results.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">execute_query</span><span class="p">(</span><span class="n">query_string</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">:</span>
+        <span class="n">conn</span> <span class="o">=</span> <span class="n">psycopg2</span><span class="o">.</span><span class="n">connect</span><span class="p">(</span><span class="n">database</span><span class="o">=</span><span class="n">database</span><span class="p">,</span> <span class="n">host</span><span class="o">=</span><span class="n">host</span><span class="p">,</span>
+                                <span class="n">user</span><span class="o">=</span><span class="n">user</span><span class="p">,</span> <span class="n">password</span><span class="o">=</span><span class="n">password</span><span class="p">,</span>
+                                <span class="n">port</span><span class="o">=</span><span class="n">port</span><span class="p">)</span>
+        <span class="n">cur</span> <span class="o">=</span> <span class="n">conn</span><span class="o">.</span><span class="n">cursor</span><span class="p">()</span>
+        <span class="n">cur</span><span class="o">.</span><span class="n">execute</span><span class="p">(</span><span class="n">query_string</span><span class="p">)</span>
+        <span class="n">results</span> <span class="o">=</span> <span class="n">fetch_all_as_dict</span><span class="p">(</span><span class="n">cur</span><span class="p">)</span>
+        <span class="n">conn</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
+
+        <span class="k">return</span> <span class="n">results</span>
+
+    <span class="k">return</span> <span class="n">execute_query</span></div>
+
+
+
+<div class="viewcode-block" id="make_veliadb_query_engine">
+<a class="viewcode-back" href="../../../modules/bigprot.html#orfdb.bigprot.db_utils.make_veliadb_query_engine">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">make_veliadb_query_engine</span><span class="p">(</span><span class="n">veliadb_config_fpath</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="n">constants</span><span class="o">.</span><span class="n">DEFAULT_VELIADB_SETTINGS_FPATH</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">callable</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Creates a query engine for the Veliadb database.</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        veliadb_config_fpath (str): The path to the Veliadb configuration file. Defaults to constants.DEFAULT_VELIADB_SETTINGS_FPATH.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        function: A function that executes queries on the Veliadb database and returns the results.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">veliadb_config</span> <span class="o">=</span> <span class="n">get_config</span><span class="p">(</span><span class="n">veliadb_config_fpath</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">query_engine_factory</span><span class="p">(</span><span class="n">database</span><span class="o">=</span><span class="n">veliadb_config</span><span class="p">[</span><span class="s1">&#39;DATABASE&#39;</span><span class="p">][</span><span class="s1">&#39;postgres_database&#39;</span><span class="p">],</span>
+                                <span class="n">host</span><span class="o">=</span><span class="n">veliadb_config</span><span class="p">[</span><span class="s1">&#39;DATABASE&#39;</span><span class="p">][</span><span class="s1">&#39;postgres_host&#39;</span><span class="p">],</span>
+                                <span class="n">user</span><span class="o">=</span><span class="n">veliadb_config</span><span class="p">[</span><span class="s1">&#39;DATABASE&#39;</span><span class="p">][</span><span class="s1">&#39;postgres_user&#39;</span><span class="p">],</span>
+                                <span class="n">password</span><span class="o">=</span><span class="n">veliadb_config</span><span class="p">[</span><span class="s1">&#39;DATABASE&#39;</span><span class="p">][</span><span class="s1">&#39;postgres_password&#39;</span><span class="p">],</span>
+                                <span class="n">port</span><span class="o">=</span><span class="n">veliadb_config</span><span class="p">[</span><span class="s1">&#39;DATABASE&#39;</span><span class="p">][</span><span class="s1">&#39;postgres_port&#39;</span><span class="p">])</span></div>
+
+
+
+<div class="viewcode-block" id="get_assemblies">
+<a class="viewcode-back" href="../../../modules/bigprot.html#orfdb.bigprot.db_utils.get_assemblies">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">get_assemblies</span><span class="p">(</span><span class="n">veliadb_config_fpath</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="n">constants</span><span class="o">.</span><span class="n">DEFAULT_VELIADB_SETTINGS_FPATH</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Gets all assemblies from the Veliadb database.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        list: A list of all assemblies in the Veliadb database.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;Retrieving assemblies from Velia DB ...&quot;</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">make_veliadb_query_engine</span><span class="p">(</span><span class="n">veliadb_config_fpath</span><span class="p">)(</span><span class="n">ASSEMBLY_QUERY</span><span class="p">)</span></div>
+
+
+
+<div class="viewcode-block" id="get_orfs">
+<a class="viewcode-back" href="../../../modules/bigprot.html#orfdb.bigprot.db_utils.get_orfs">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">get_orfs</span><span class="p">(</span><span class="n">veliadb_config_fpath</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="n">constants</span><span class="o">.</span><span class="n">DEFAULT_VELIADB_SETTINGS_FPATH</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Gets all ORFs from the Veliadb database.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        list: A list of all ORFs in the Veliadb database.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s1">&#39;Retrieving ORFs from Velia DB ...&#39;</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">make_veliadb_query_engine</span><span class="p">(</span><span class="n">veliadb_config_fpath</span><span class="p">)(</span><span class="n">ORF_QUERY</span><span class="p">)</span></div>
+
+
+
+<div class="viewcode-block" id="get_transcripts">
+<a class="viewcode-back" href="../../../modules/bigprot.html#orfdb.bigprot.db_utils.get_transcripts">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">get_transcripts</span><span class="p">(</span><span class="n">veliadb_config_fpath</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="n">constants</span><span class="o">.</span><span class="n">DEFAULT_VELIADB_SETTINGS_FPATH</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Gets all transcripts from the Veliadb database.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        list: A list of all transcripts in the Veliadb database.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s1">&#39;Retrieving transcripts from Veliadb ...&#39;</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">make_veliadb_query_engine</span><span class="p">(</span><span class="n">veliadb_config_fpath</span><span class="p">)(</span><span class="n">TRANSCRIPT_QUERY</span><span class="p">)</span></div>
+
+
+
+<div class="viewcode-block" id="get_exons">
+<a class="viewcode-back" href="../../../modules/bigprot.html#orfdb.bigprot.db_utils.get_exons">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">get_exons</span><span class="p">(</span><span class="n">veliadb_config_fpath</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="n">constants</span><span class="o">.</span><span class="n">DEFAULT_VELIADB_SETTINGS_FPATH</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Gets all exons from the Veliadb database.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        list: A list of all exons in the Veliadb database.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s1">&#39;Retrieving exons from Veliadb ...&#39;</span><span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">make_veliadb_query_engine</span><span class="p">(</span><span class="n">veliadb_config_fpath</span><span class="p">)(</span><span class="n">EXON_QUERY</span><span class="p">)</span></div>
+
+
+
+<div class="viewcode-block" id="get_cdss">
+<a class="viewcode-back" href="../../../modules/bigprot.html#orfdb.bigprot.db_utils.get_cdss">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">get_cdss</span><span class="p">(</span><span class="n">veliadb_config_fpath</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="n">constants</span><span class="o">.</span><span class="n">DEFAULT_VELIADB_SETTINGS_FPATH</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Gets all CDSs from the Veliadb database.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        list: A list of all CDSs in the Veliadb database.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s1">&#39;Retrieving cdss from Veliadb ...&#39;</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">make_veliadb_query_engine</span><span class="p">(</span><span class="n">veliadb_config_fpath</span><span class="p">)(</span><span class="n">CDS_QUERY</span><span class="p">)</span></div>
+
+</pre></div>
+
+           </div>
+          </div>
+          <footer>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright 2024, orfdb developers.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>
