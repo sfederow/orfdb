@@ -1,10 +1,14 @@
 # OrfDB
 
-OrfDB is a genomic annotation database that is designed to support open reading frames.  Notably, existing database infrastructure. This package is designed to load various annotation sources into the ORF database, including GENCODE, RefSeq, CHESS, and custom transcriptomes.  
+OrfDB is a genomic annotation database that is designed to support open reading frames. 
 
 ## Overview
 
-The OrfDB package provides a set of scripts and utilities to manage and load genomic data into a structured database. It supports multiple data sources and formats, ensuring that the database is populated with the most relevant and up-to-date information.
+The OrfDB package provides a set of scripts and utilities to manage and load genomic data into a structured database. This package contains the code to load various annotation sources into the ORF database, including GENCODE, RefSeq, CHESS, and custom transcriptomes. A utility to generate all possible ORFs from a set of transcripts (BigProt written by Dylan Skola) is also contained within this package. The database design is inspired by COBRAdb and the Ensembl genome database.
+
+## Why OrfDB?
+
+Standard genomic file formats (e.g. GFF) and databases (e.g. Ensembl) do not provide first-class support for ORFs. CDS and exons are well annotated and some support is provided for protein level entries but specific handling of ORFs is overlooked.  
 
 ## Installation
 
@@ -60,5 +64,5 @@ OrfDB is licensed under the MIT License. See the LICENSE file for more details.
 
 For any questions or issues, please contact the author:
 
-- **Author**: Stephen Federowicz
-- **Email**: steve@veliatx.com, sfederow@gmail.com
+- **Author**: Stephen Federowicz, Dylan Skola
+- **Email**: sfederow@gmail.com, dylan@phageghost.net
