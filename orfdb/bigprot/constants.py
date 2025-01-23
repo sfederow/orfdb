@@ -5,7 +5,7 @@ start and stop codons, and other parameters related to the ORF finding and annot
 import os
 
 DEFAULT_MIN_CODON_LENGTH = 15
-DEFAULT_MAX_CODON_LENGTH = 150
+DEFAULT_MAX_CODON_LENGTH = 1000
 DEFAULT_START_CODONS = ('ATG', 'CTG', 'TTG', 'GTG')
 DEFAULT_STOP_CODONS = ('TAA', 'TAG', 'TGA')
 TRANSCRIPT_COORDINATE_SYSTEM = 'gff'

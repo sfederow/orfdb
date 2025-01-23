@@ -72,7 +72,6 @@ class Assembly(Base):
     sequence_role: Mapped[Optional[str]] = mapped_column(String(200))
     assembly_unit: Mapped[Optional[str]] = mapped_column(String(200))
     assigned_molecule: Mapped[Optional[str]] = mapped_column(String(200))
-    assigned_molecule_location: Mapped[Optional[str]] = mapped_column(String(200))
     sequence_length: Mapped[int] = mapped_column(Integer)
     genome_accession: Mapped[Optional[str]] = mapped_column(String(200))
     attrs: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON)

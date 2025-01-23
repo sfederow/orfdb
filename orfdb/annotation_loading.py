@@ -5,16 +5,13 @@ into the ORF database, including genome assemblies, genes, transcripts,
 exons, UTRs, and CDS regions from different data sources.
 """
 
-from Bio.Seq import Seq
-from orfdb.base import *  
-from orfdb import base
-from orfdb import util as orf_utils  
-
-import ast
 import gzip
 import hashlib
 import logging
 import pandas as pd
+
+from orfdb.base import *  
+from orfdb import base
 from os.path import basename
 from warnings import warn
 from pathlib import Path
@@ -44,7 +41,6 @@ def load_genome_assembly(session: Session, assembly_df: pd.DataFrame, assembly_n
             sequence_role='unmapped',
             assembly_unit='unmapped',
             assigned_molecule='unmapped',
-            assigned_molecule_location='unmapped',
             sequence_length=-1,
             genome_accession='unmapped'
         )
@@ -57,42 +53,40 @@ def load_genome_assembly(session: Session, assembly_df: pd.DataFrame, assembly_n
         # Check if assembly exists
         stmt = select(base.Assembly).filter(
             or_(
-                base.Assembly.genbank_accession == row['GenBank-Accn'],
-                base.Assembly.refseq_accession == row['RefSeq-Accn']
+                base.Assembly.genbank_accession == row['GenBank seq accession'],
+                base.Assembly.refseq_accession == row['RefSeq seq accession']
             )
         )
         existing = session.execute(stmt).scalar_one_or_none()
 
         if existing:
             # Update existing assembly
-            existing.genbank_accession = row['GenBank-Accn']
-            existing.refseq_accession = row['RefSeq-Accn']
-            existing.ucsc_style_name = row['UCSC-style-name']
-            existing.sequence_role = row['Sequence-Role']
-            existing.assembly_unit = row['Assembly-Unit']
-            existing.assigned_molecule = row['Assigned-Molecule']
-            existing.assigned_molecule_location = row['Assigned-Molecule-Location/Type']
-            existing.sequence_length = int(row['Sequence-Length'])
+            existing.genbank_accession = row['GenBank seq accession']
+            existing.refseq_accession = row['RefSeq seq accession']
+            existing.ucsc_style_name = row['UCSC style name']
+            existing.sequence_role = row['Role']
+            existing.assembly_unit = row['Assembly-unit accession']
+            existing.assigned_molecule = row['Molecule type']
+            existing.sequence_length = int(row['Seq length'])
             existing.genome_accession = assembly_name
             existing.attrs = {
-                'sequence_name': row['Sequence-Name'],
-                'relationship': row['Relationship']
+                'sequence_name': row['Sequence name'],
+                'GC': str(row['GC Percent'])
             }
         else:
             # Create new assembly
             assembly = base.Assembly(
-                genbank_accession=row['GenBank-Accn'],
-                refseq_accession=row['RefSeq-Accn'],
-                ucsc_style_name=row['UCSC-style-name'],
-                sequence_role=row['Sequence-Role'],
-                assembly_unit=row['Assembly-Unit'],
-                assigned_molecule=row['Assigned-Molecule'],
-                assigned_molecule_location=row['Assigned-Molecule-Location/Type'],
-                sequence_length=int(row['Sequence-Length']),
+                genbank_accession=row['GenBank seq accession'],
+                refseq_accession=row['RefSeq seq accession'],
+                ucsc_style_name=row['UCSC style name'],
+                sequence_role=row['Role'],
+                assembly_unit=row['Assembly-unit accession'],
+                assigned_molecule=row['Molecule type'],
+                sequence_length=int(row['Seq length']),
                 genome_accession=assembly_name,
                 attrs={
-                    'sequence_name': row['Sequence-Name'],
-                    'relationship': row['Relationship']
+                    'sequence_name': row['Sequence name'],
+                    'GC': str(row['GC Percent'])
                 }
             )
             assemblies_to_add.append(assembly)
@@ -108,20 +102,13 @@ def load_genome_assembly(session: Session, assembly_df: pd.DataFrame, assembly_n
 def load_gencode_genes(
     session: Session, 
     gene_gff_df: pd.DataFrame, 
-    assembly_ids: Dict[str, int]
 ) -> None:
     """Load GENCODE gene annotations into the database.
 
     Args:
         session: SQLAlchemy session
         gene_gff_df: DataFrame containing gene annotations
-        assembly_ids: Dictionary mapping chromosome names to assembly IDs
     """
-    # Map assembly IDs to DataFrame
-    gene_gff_df['assembly_id'] = gene_gff_df.apply(
-        lambda x: assembly_ids[x.seqid], 
-        axis=1
-    )
 
     # Group by unique columns to handle redundant entries
     unique_cols = ['start', 'end', 'strand', 'assembly_id']
@@ -237,7 +224,7 @@ def load_gencode_genes(
     logging.info(f'Added {len(xrefs_to_add)} GENCODE gene synonyms')
 
 
-def load_gencode_exons(session: Session, exon_gff_df: pd.DataFrame, assembly_ids: Dict[str, int]) -> None:
+def load_gencode_exons(session: Session, exon_gff_df: pd.DataFrame) -> None:
     """Load exons from GENCODE GFF file.
 
     Args:
@@ -245,11 +232,7 @@ def load_gencode_exons(session: Session, exon_gff_df: pd.DataFrame, assembly_ids
         exon_gff_df: GENCODE GFF dataframe filtered for exons
         assembly_ids: Mapping of sequence IDs to assembly IDs
     """
-    # Map assembly IDs to DataFrame
-    exon_gff_df['assembly_id'] = exon_gff_df.apply(
-        lambda x: assembly_ids[x.seqid],
-        axis=1
-    )
+
 
     # Group by unique columns to handle redundant entries
     unique_cols = ['start', 'end', 'strand', 'assembly_id']
@@ -339,7 +322,6 @@ def load_gencode_transcripts(
     exon_gff_df: pd.DataFrame, 
     gencode_dir: Path,
     version: str, 
-    assembly_ids: Dict[str, int]
 ) -> Dict[str, List[Tuple[int, int]]]:
     """Load transcripts from GENCODE GFF file.
 
@@ -354,15 +336,7 @@ def load_gencode_transcripts(
     Returns:
         Dictionary mapping transcript IDs to exon information
     """
-    # Map assembly IDs
-    tx_gff_df['assembly_id'] = tx_gff_df.apply(
-        lambda x: assembly_ids[x.seqid],
-        axis=1
-    )
-    exon_gff_df['assembly_id'] = exon_gff_df.apply(
-        lambda x: assembly_ids[x.seqid],
-        axis=1
-    )
+
 
     tx_gff_df['attrs'] = tx_gff_df['attributes'].apply(parse_attributes)
     tx_gff_df['ID'] = tx_gff_df['attrs'].apply(lambda x: x.get('ID', ''))
@@ -554,7 +528,6 @@ def load_gencode_transcripts(
 def load_gencode_utr(
     session: Session, 
     utr_gff_df: pd.DataFrame, 
-    assembly_ids: Dict[str, int], 
     utr_class
 ) -> None:
     """Load UTRs from GENCODE GFF file.
@@ -565,11 +538,6 @@ def load_gencode_utr(
         assembly_ids: Mapping of GENCODE 'seqid' to internal database IDs
         utr_class: The UTR class to use (either UTR3 or UTR5)
     """
-    # Map assembly IDs to DataFrame
-    utr_gff_df['assembly_id'] = utr_gff_df.apply(
-        lambda x: assembly_ids[x.seqid], 
-        axis=1
-    )
 
     # Group by unique columns to handle redundant entries
     unique_cols = ['start', 'end', 'strand', 'assembly_id']
@@ -652,7 +620,6 @@ def load_gencode_utr(
 def load_gencode_cds(
     session: Session, 
     cds_gff_df: pd.DataFrame, 
-    assembly_ids: Dict[str, int]
 ) -> None:
     """Load CDS from GENCODE GFF file.
 
@@ -661,11 +628,7 @@ def load_gencode_cds(
         cds_gff_df: GENCODE GFF dataframe filtered for CDS records
         assembly_ids: Mapping of sequence IDs to assembly IDs
     """
-    # Map assembly IDs to DataFrame
-    cds_gff_df['assembly_id'] = cds_gff_df.apply(
-        lambda x: assembly_ids[x.seqid], 
-        axis=1
-    )
+
 
     # Group by unique columns to handle redundant entries
     unique_cols = ['start', 'end', 'strand', 'assembly_id']
@@ -767,7 +730,7 @@ def load_gencode_cds(
     logging.info(f'Added {len(cds_xrefs)} GENCODE CDS synonyms')
 
 
-def load_gencode_exon_cds(session: Session, cds_gff_df: pd.DataFrame, assembly_ids: Dict[str, int]) -> None:
+def load_gencode_exon_cds(session: Session, cds_gff_df: pd.DataFrame) -> None:
     """Load exon-CDS relationships from GENCODE data.
 
     Args:
@@ -791,7 +754,6 @@ def load_gencode_exon_cds(session: Session, cds_gff_df: pd.DataFrame, assembly_i
         for syn, exon in session.execute(stmt).all()
     }
 
-    cds_gff_df['assembly_id'] = cds_gff_df.apply(lambda x: assembly_ids[x.seqid], axis=1)
     cds_gff_df['attrs'] = cds_gff_df['attributes'].apply(parse_attributes)
     cds_gff_df['exon_id'] = cds_gff_df['attrs'].apply(lambda x: x.get('exon_id', ''))
 
