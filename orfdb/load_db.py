@@ -131,7 +131,7 @@ def load_genome_assembly(session, genome_dir):
     Load genome assembly information into the database.
 
     This function reads the genome assembly report from a specified directory,
-    processes the data, and loads it into the database using the provided session.
+    processes the data, and loads  it into the database using the provided session.
 
     Args:
         session: SQLAlchemy session object used for database transactions.
