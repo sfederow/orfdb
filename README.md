@@ -1,6 +1,6 @@
 # OrfDB
 
-OrfDB is a comprehensive resource for internal small open reading frame (sORF) annotation and experimental data. This package is designed to load various annotation sources into the ORF database, including GENCODE, RefSeq, CHESS, OpenProt, and custom ORF annotations.
+OrfDB is a genomic annotation database that is designed to support open reading frames.  Notably, existing database infrastructure. This package is designed to load various annotation sources into the ORF database, including GENCODE, RefSeq, CHESS, and custom transcriptomes.  
 
 ## Overview
 
@@ -10,8 +10,10 @@ The OrfDB package provides a set of scripts and utilities to manage and load gen
 
 To install the OrfDB package, use the following command:
 
-bash
-pip install .
+```
+git clone https://github.com/veliatx/orfdb.git
+pip install orfdb/
+```
 
 This will install the package and its dependencies, as well as set up the command line script `orfdb_load`.
 
@@ -26,9 +28,9 @@ Before running the database loading scripts, ensure that the `settings.ini` file
 
 The main entry point for loading data into the ORF database is the `load_db` function, which can be executed via the command line using the installed script:
 
-bash
+```
 orfdb_load
-
+```
 
 ### Command Line Options
 
@@ -36,9 +38,9 @@ orfdb_load
 
 Example usage:
 
-bash
+```
 orfdb_load --drop-all
-
+```
 
 This command will drop all existing tables in the database and recreate them before loading the data.
 
@@ -59,4 +61,4 @@ OrfDB is licensed under the MIT License. See the LICENSE file for more details.
 For any questions or issues, please contact the author:
 
 - **Author**: Stephen Federowicz
-- **Email**: steve@veliatx.com
+- **Email**: steve@veliatx.com, sfederow@gmail.com
