@@ -1,0 +1,697 @@
+
+
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" data-content_root="../../">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>orfdb.load_db &mdash; orfdb 1.0 documentation</title>
+      <link rel="stylesheet" type="text/css" href="../../_static/pygments.css?v=b86133f3" />
+      <link rel="stylesheet" type="text/css" href="../../_static/css/theme.css?v=e59714d7" />
+
+  
+      <script src="../../_static/jquery.js?v=5d32c60e"></script>
+      <script src="../../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+      <script src="../../_static/documentation_options.js?v=f2a433a1"></script>
+      <script src="../../_static/doctools.js?v=9a2dae69"></script>
+      <script src="../../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script src="../../_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="../../genindex.html" />
+    <link rel="search" title="Search" href="../../search.html" /> 
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="../../index.html" class="icon icon-home">
+            orfdb
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="../../search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">Contents:</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../modules/base.html">Base Module</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../modules/load_db.html">Database Loading Module</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../modules/annotation_loading.html">Annotation Loading Module</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../modules/settings.html">Settings Module</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../modules/util.html">Utilities Module</a></li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../../index.html">orfdb</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="../../index.html" class="icon icon-home" aria-label="Home"></a></li>
+          <li class="breadcrumb-item"><a href="../index.html">Module code</a></li>
+      <li class="breadcrumb-item active">orfdb.load_db</li>
+      <li class="wy-breadcrumbs-aside">
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <h1>Source code for orfdb.load_db</h1><div class="highlight"><pre>
+<span></span><span class="ch">#!/usr/bin/env python3</span>
+<span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">Database loading script for the ORF database.</span>
+
+<span class="sd">This script handles the loading of various annotation sources into the ORF database,</span>
+<span class="sd">including GENCODE, RefSeq, CHESS, OpenProt, and custom ORF annotations.</span>
+<span class="sd">&quot;&quot;&quot;</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">logging</span><span class="o">,</span><span class="w"> </span><span class="nn">re</span><span class="o">,</span><span class="w"> </span><span class="nn">sys</span><span class="o">,</span><span class="w"> </span><span class="nn">time</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Optional</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">click</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">pandas</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">pd</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">sqlalchemy</span><span class="w"> </span><span class="kn">import</span> <span class="n">select</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">sqlalchemy.orm</span><span class="w"> </span><span class="kn">import</span> <span class="n">Session</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">orfdb</span><span class="w"> </span><span class="kn">import</span> <span class="n">base</span><span class="p">,</span> <span class="n">settings</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">orfdb</span><span class="w"> </span><span class="kn">import</span> <span class="n">annotation_loading</span><span class="p">,</span> <span class="n">annotation_updates</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">seqmap</span><span class="w"> </span><span class="kn">import</span> <span class="n">genomic</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">orfdb.util</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">orf_utils</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">seqmap.utils</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">seq_utils</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">sqlalchemy_batch_inserts</span><span class="w"> </span><span class="kn">import</span> <span class="n">enable_batch_inserting</span>
+
+
+<div class="viewcode-block" id="configure_logger">
+<a class="viewcode-back" href="../../modules/load_db.html#orfdb.load_db.configure_logger">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">configure_logger</span><span class="p">(</span>
+    <span class="n">log_file</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> 
+    <span class="n">level</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="n">logging</span><span class="o">.</span><span class="n">INFO</span><span class="p">,</span> 
+    <span class="n">overwrite_log</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
+    <span class="nb">format</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="n">logging</span><span class="o">.</span><span class="n">BASIC_FORMAT</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Configure logging for the application.</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        log_file: Path to log file. Defaults to None (stdout).</span>
+<span class="sd">        level: Logging level. Defaults to logging.INFO.</span>
+<span class="sd">        overwrite_log: Whether to overwrite existing log. Defaults to True.</span>
+<span class="sd">        format: Log message format. Defaults to BASIC_FORMAT.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="n">log_file</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">logging</span><span class="o">.</span><span class="n">basicConfig</span><span class="p">(</span><span class="n">stream</span><span class="o">=</span><span class="n">sys</span><span class="o">.</span><span class="n">stdout</span><span class="p">,</span> <span class="n">level</span><span class="o">=</span><span class="n">level</span><span class="p">,</span> <span class="nb">format</span><span class="o">=</span><span class="nb">format</span><span class="p">)</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="n">logging</span><span class="o">.</span><span class="n">basicConfig</span><span class="p">(</span>
+            <span class="n">filename</span><span class="o">=</span><span class="n">log_file</span><span class="p">,</span>
+            <span class="n">level</span><span class="o">=</span><span class="n">level</span><span class="p">,</span>
+            <span class="n">filemode</span><span class="o">=</span><span class="p">(</span><span class="s1">&#39;w&#39;</span> <span class="k">if</span> <span class="n">overwrite_log</span> <span class="k">else</span> <span class="s1">&#39;a&#39;</span><span class="p">),</span>
+            <span class="nb">format</span><span class="o">=</span><span class="nb">format</span>
+        <span class="p">)</span>
+        <span class="n">console</span> <span class="o">=</span> <span class="n">logging</span><span class="o">.</span><span class="n">StreamHandler</span><span class="p">()</span>
+        <span class="n">console</span><span class="o">.</span><span class="n">setLevel</span><span class="p">(</span><span class="n">level</span><span class="p">)</span>
+        <span class="n">console</span><span class="o">.</span><span class="n">setFormatter</span><span class="p">(</span><span class="n">logging</span><span class="o">.</span><span class="n">Formatter</span><span class="p">(</span><span class="nb">format</span><span class="p">))</span>
+        <span class="n">logging</span><span class="o">.</span><span class="n">getLogger</span><span class="p">(</span><span class="s1">&#39;&#39;</span><span class="p">)</span><span class="o">.</span><span class="n">addHandler</span><span class="p">(</span><span class="n">console</span><span class="p">)</span></div>
+
+
+
+<div class="viewcode-block" id="bump_version">
+<a class="viewcode-back" href="../../modules/load_db.html#orfdb.load_db.bump_version">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">bump_version</span><span class="p">(</span><span class="n">version</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Bumps the patch version by 1 for a semantic version string (e.g., v0.9.3 -&gt; v0.9.4).</span>
+<span class="sd">    </span>
+<span class="sd">    Args:</span>
+<span class="sd">        version (str): The version string to bump (e.g., &#39;v0.9.3&#39;).</span>
+<span class="sd">    </span>
+<span class="sd">    Returns:</span>
+<span class="sd">        str: The bumped version string.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="c1"># Match versions like v0.9.3</span>
+    <span class="n">match</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">match</span><span class="p">(</span><span class="sa">r</span><span class="s2">&quot;^(v?)(\d+)\.(\d+)\.(\d+)$&quot;</span><span class="p">,</span> <span class="n">version</span><span class="p">)</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">match</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Invalid version format: </span><span class="si">{</span><span class="n">version</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    
+    <span class="n">prefix</span><span class="p">,</span> <span class="n">major</span><span class="p">,</span> <span class="n">minor</span><span class="p">,</span> <span class="n">patch</span> <span class="o">=</span> <span class="n">match</span><span class="o">.</span><span class="n">groups</span><span class="p">()</span>
+    <span class="c1"># Increment the patch number</span>
+    <span class="n">bumped_version</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">prefix</span><span class="si">}{</span><span class="n">major</span><span class="si">}</span><span class="s2">.</span><span class="si">{</span><span class="n">minor</span><span class="si">}</span><span class="s2">.</span><span class="si">{</span><span class="nb">int</span><span class="p">(</span><span class="n">patch</span><span class="p">)</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="mi">1</span><span class="si">}</span><span class="s2">&quot;</span>
+    <span class="k">return</span> <span class="n">bumped_version</span></div>
+
+
+
+<span class="nd">@click</span><span class="o">.</span><span class="n">command</span><span class="p">()</span>
+<span class="nd">@click</span><span class="o">.</span><span class="n">option</span><span class="p">(</span><span class="s1">&#39;--drop-all&#39;</span><span class="p">,</span> <span class="n">is_flag</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">help</span><span class="o">=</span><span class="s1">&#39;Empty database and reload data.&#39;</span><span class="p">)</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">load_db</span><span class="p">(</span><span class="n">drop_all</span><span class="p">:</span> <span class="nb">bool</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Main entry point for loading the ORF database.</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        drop_all: If True, drops and recreates all database tables.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">configure_logger</span><span class="p">(</span>
+        <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">time</span><span class="o">.</span><span class="n">strftime</span><span class="p">(</span><span class="s1">&#39;%Y%m</span><span class="si">%d</span><span class="s1">_%H%M%S&#39;</span><span class="p">)</span><span class="si">}</span><span class="s2">_orfdb_load_db.log&quot;</span><span class="p">,</span>
+        <span class="n">level</span><span class="o">=</span><span class="n">logging</span><span class="o">.</span><span class="n">INFO</span>
+    <span class="p">)</span>
+
+    <span class="k">if</span> <span class="n">drop_all</span><span class="p">:</span>
+        <span class="n">logging</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s1">&#39;Dropping the database&#39;</span><span class="p">)</span>
+        <span class="n">base</span><span class="o">.</span><span class="n">Base</span><span class="o">.</span><span class="n">metadata</span><span class="o">.</span><span class="n">drop_all</span><span class="p">(</span><span class="n">bind</span><span class="o">=</span><span class="n">base</span><span class="o">.</span><span class="n">engine</span><span class="p">)</span>
+        
+        <span class="n">logging</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s1">&#39;Creating the database&#39;</span><span class="p">)</span>
+        <span class="n">base</span><span class="o">.</span><span class="n">Base</span><span class="o">.</span><span class="n">metadata</span><span class="o">.</span><span class="n">create_all</span><span class="p">(</span><span class="n">bind</span><span class="o">=</span><span class="n">base</span><span class="o">.</span><span class="n">engine</span><span class="p">)</span>
+
+    <span class="n">session</span> <span class="o">=</span> <span class="n">base</span><span class="o">.</span><span class="n">Session</span><span class="p">()</span>
+    <span class="n">enable_batch_inserting</span><span class="p">(</span><span class="n">session</span><span class="p">)</span>
+
+    <span class="n">logging</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;Loading </span><span class="si">{</span><span class="n">settings</span><span class="o">.</span><span class="n">db_connection_string</span><span class="si">}</span><span class="s1">&#39;</span><span class="p">)</span>
+
+    <span class="k">try</span><span class="p">:</span>
+        <span class="n">logging</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s1">&#39;Load genome assembly&#39;</span><span class="p">)</span>
+        <span class="n">load_genome_assembly</span><span class="p">(</span><span class="n">session</span><span class="p">,</span> <span class="n">settings</span><span class="o">.</span><span class="n">genomes_directory</span><span class="p">)</span>
+
+
+        <span class="n">logging</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s1">&#39;Loading GENCODE&#39;</span><span class="p">)</span>
+        <span class="n">load_gencode_gff</span><span class="p">(</span><span class="n">session</span><span class="p">,</span> <span class="n">settings</span><span class="o">.</span><span class="n">gencode_directory</span><span class="p">,</span>
+                        <span class="n">settings</span><span class="o">.</span><span class="n">gencode_version</span><span class="p">)</span>
+
+        <span class="n">logging</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s1">&#39;Loading RefSeq&#39;</span><span class="p">)</span>
+        <span class="n">load_refseq_gff</span><span class="p">(</span><span class="n">session</span><span class="p">,</span> <span class="n">settings</span><span class="o">.</span><span class="n">refseq_directory</span><span class="p">)</span>
+
+        <span class="n">logging</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s1">&#39;Loading CHESS&#39;</span><span class="p">)</span>
+        <span class="n">load_chess_gff</span><span class="p">(</span><span class="n">session</span><span class="p">,</span> <span class="n">settings</span><span class="o">.</span><span class="n">chess_directory</span><span class="p">)</span>
+
+        <span class="n">logging</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s1">&#39;Loading BigProt&#39;</span><span class="p">)</span>
+        <span class="n">load_bigprot_tables</span><span class="p">(</span><span class="n">session</span><span class="p">,</span> <span class="n">settings</span><span class="o">.</span><span class="n">bigprot_directory</span><span class="p">)</span>
+        
+        <span class="n">session</span><span class="o">.</span><span class="n">commit</span><span class="p">()</span>
+
+    <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+        <span class="n">session</span><span class="o">.</span><span class="n">rollback</span><span class="p">()</span>
+        <span class="n">logging</span><span class="o">.</span><span class="n">error</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Error during database loading: </span><span class="si">{</span><span class="nb">str</span><span class="p">(</span><span class="n">e</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+        <span class="k">raise</span>
+    <span class="k">finally</span><span class="p">:</span>
+        <span class="n">session</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
+
+
+<div class="viewcode-block" id="load_genome_assembly">
+<a class="viewcode-back" href="../../modules/load_db.html#orfdb.load_db.load_genome_assembly">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">load_genome_assembly</span><span class="p">(</span><span class="n">session</span><span class="p">,</span> <span class="n">genome_dir</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Load genome assembly information into the database.</span>
+
+<span class="sd">    This function reads the genome assembly report from a specified directory,</span>
+<span class="sd">    processes the data, and loads  it into the database using the provided session.</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        session: SQLAlchemy session object used for database transactions.</span>
+<span class="sd">        genome_dir (Path): Directory containing the genome assembly report file.</span>
+
+<span class="sd">    The function expects the genome assembly report to be located at:</span>
+<span class="sd">    &#39;hg38/GCF_000001405.40.assembly_report.txt.tsv&#39; within the provided genome_dir.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">assembly_info</span> <span class="o">=</span> <span class="n">genome_dir</span><span class="o">.</span><span class="n">joinpath</span><span class="p">(</span>
+        <span class="s1">&#39;hg38&#39;</span><span class="p">,</span>
+        <span class="s1">&#39;GCF_000001405.40.assembly_report.txt.tsv&#39;</span>
+    <span class="p">)</span>
+
+    <span class="n">assembly_df</span> <span class="o">=</span> <span class="n">pd</span><span class="o">.</span><span class="n">read_csv</span><span class="p">(</span>
+        <span class="n">assembly_info</span><span class="p">,</span>
+        <span class="n">sep</span><span class="o">=</span><span class="s1">&#39;</span><span class="se">\t</span><span class="s1">&#39;</span><span class="p">,</span>
+    <span class="p">)</span>
+
+    <span class="n">logging</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s1">&#39;Loading genome assembly&#39;</span><span class="p">)</span>
+    <span class="n">annotation_loading</span><span class="o">.</span><span class="n">load_genome_assembly</span><span class="p">(</span>
+        <span class="n">session</span><span class="p">,</span> <span class="n">assembly_df</span><span class="p">,</span> <span class="n">assembly_info</span><span class="o">.</span><span class="n">stem</span><span class="p">)</span></div>
+
+
+
+<div class="viewcode-block" id="load_gencode_gff">
+<a class="viewcode-back" href="../../modules/load_db.html#orfdb.load_db.load_gencode_gff">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">load_gencode_gff</span><span class="p">(</span><span class="n">session</span><span class="p">,</span> <span class="n">gencode_dir</span><span class="p">,</span> <span class="n">version</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Load GENCODE annotations from GFF files.</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        session: SQLAlchemy session object</span>
+<span class="sd">        gencode_dir (Path): Directory containing GENCODE files</span>
+<span class="sd">        version (str): GENCODE version (e.g., &#39;v42&#39;)</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="n">gencode_gff</span> <span class="o">=</span> <span class="n">gencode_dir</span><span class="o">.</span><span class="n">joinpath</span><span class="p">(</span>
+        <span class="n">version</span><span class="p">,</span>
+        <span class="sa">f</span><span class="s1">&#39;gencode.</span><span class="si">{</span><span class="n">version</span><span class="si">}</span><span class="s1">.chr_patch_hapl_scaff.annotation.gff3.gz&#39;</span>
+    <span class="p">)</span>
+
+    <span class="n">logging</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;Loading GENCODE </span><span class="si">{</span><span class="n">version</span><span class="si">}</span><span class="s1"> GFF&#39;</span><span class="p">)</span>
+
+    <span class="n">gff_df</span> <span class="o">=</span> <span class="n">pd</span><span class="o">.</span><span class="n">read_csv</span><span class="p">(</span>
+        <span class="n">gencode_gff</span><span class="p">,</span> 
+        <span class="n">sep</span><span class="o">=</span><span class="s1">&#39;</span><span class="se">\t</span><span class="s1">&#39;</span><span class="p">,</span> 
+        <span class="n">low_memory</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+        <span class="n">compression</span><span class="o">=</span><span class="s1">&#39;gzip&#39;</span> <span class="k">if</span> <span class="nb">str</span><span class="p">(</span><span class="n">gencode_gff</span><span class="p">)</span><span class="o">.</span><span class="n">endswith</span><span class="p">(</span><span class="s1">&#39;.gz&#39;</span><span class="p">)</span> <span class="k">else</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">comment</span><span class="o">=</span><span class="s1">&#39;#&#39;</span><span class="p">,</span>
+        <span class="n">names</span><span class="o">=</span><span class="p">[</span>
+            <span class="s1">&#39;seqid&#39;</span><span class="p">,</span> <span class="s1">&#39;source&#39;</span><span class="p">,</span> <span class="s1">&#39;type&#39;</span><span class="p">,</span> <span class="s1">&#39;start&#39;</span><span class="p">,</span> <span class="s1">&#39;end&#39;</span><span class="p">,</span> 
+            <span class="s1">&#39;score&#39;</span><span class="p">,</span> <span class="s1">&#39;strand&#39;</span><span class="p">,</span> <span class="s1">&#39;phase&#39;</span><span class="p">,</span> <span class="s1">&#39;attributes&#39;</span>
+        <span class="p">]</span>
+    <span class="p">)</span>
+    <span class="n">gff_df</span><span class="o">.</span><span class="n">fillna</span><span class="p">(</span><span class="s1">&#39;&#39;</span><span class="p">,</span> <span class="n">inplace</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+
+    <span class="n">assembly_ids</span> <span class="o">=</span> <span class="p">{}</span>
+    <span class="k">for</span> <span class="n">assembly</span> <span class="ow">in</span> <span class="n">session</span><span class="o">.</span><span class="n">query</span><span class="p">(</span><span class="n">base</span><span class="o">.</span><span class="n">Assembly</span><span class="p">)</span><span class="o">.</span><span class="n">all</span><span class="p">():</span>
+        <span class="k">if</span> <span class="n">assembly</span><span class="o">.</span><span class="n">ucsc_style_name</span><span class="o">.</span><span class="n">startswith</span><span class="p">(</span><span class="s1">&#39;chr&#39;</span><span class="p">)</span> <span class="ow">and</span> \
+           <span class="nb">len</span><span class="p">(</span><span class="n">assembly</span><span class="o">.</span><span class="n">ucsc_style_name</span><span class="p">)</span> <span class="o">&lt;</span> <span class="mi">6</span><span class="p">:</span>
+            <span class="n">assembly_ids</span><span class="p">[</span><span class="n">assembly</span><span class="o">.</span><span class="n">ucsc_style_name</span><span class="p">]</span> <span class="o">=</span> <span class="n">assembly</span><span class="o">.</span><span class="n">id</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">assembly_ids</span><span class="p">[</span><span class="n">assembly</span><span class="o">.</span><span class="n">genbank_accession</span><span class="p">]</span> <span class="o">=</span> <span class="n">assembly</span><span class="o">.</span><span class="n">id</span>
+
+    <span class="n">gff_df</span><span class="p">[</span><span class="s1">&#39;assembly_id&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="n">gff_df</span><span class="o">.</span><span class="n">apply</span><span class="p">(</span>
+        <span class="k">lambda</span> <span class="n">x</span><span class="p">:</span> <span class="n">assembly_ids</span><span class="p">[</span><span class="n">x</span><span class="o">.</span><span class="n">seqid</span><span class="p">]</span> <span class="k">if</span> <span class="n">x</span><span class="o">.</span><span class="n">seqid</span> <span class="ow">in</span> <span class="n">assembly_ids</span><span class="o">.</span><span class="n">keys</span><span class="p">()</span> <span class="k">else</span> <span class="s1">&#39;&#39;</span><span class="p">,</span> 
+        <span class="n">axis</span><span class="o">=</span><span class="mi">1</span>
+    <span class="p">)</span>
+
+    <span class="n">gff_df</span> <span class="o">=</span> <span class="n">gff_df</span><span class="p">[</span><span class="n">gff_df</span><span class="p">[</span><span class="s1">&#39;assembly_id&#39;</span><span class="p">]</span> <span class="o">!=</span> <span class="s1">&#39;&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">copy</span><span class="p">()</span>
+
+    <span class="n">gene_gff_df</span> <span class="o">=</span> <span class="n">gff_df</span><span class="p">[</span><span class="n">gff_df</span><span class="p">[</span><span class="s1">&#39;type&#39;</span><span class="p">]</span> <span class="o">==</span> <span class="s1">&#39;gene&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">copy</span><span class="p">()</span>
+    <span class="n">tx_gff_df</span> <span class="o">=</span> <span class="n">gff_df</span><span class="p">[</span><span class="n">gff_df</span><span class="p">[</span><span class="s1">&#39;type&#39;</span><span class="p">]</span> <span class="o">==</span> <span class="s1">&#39;transcript&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">copy</span><span class="p">()</span>
+    <span class="n">exon_gff_df</span> <span class="o">=</span> <span class="n">gff_df</span><span class="p">[</span><span class="n">gff_df</span><span class="p">[</span><span class="s1">&#39;type&#39;</span><span class="p">]</span> <span class="o">==</span> <span class="s1">&#39;exon&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">copy</span><span class="p">()</span>
+    <span class="n">cds_gff_df</span> <span class="o">=</span> <span class="n">gff_df</span><span class="p">[</span><span class="n">gff_df</span><span class="p">[</span><span class="s1">&#39;type&#39;</span><span class="p">]</span> <span class="o">==</span> <span class="s1">&#39;CDS&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">copy</span><span class="p">()</span>
+    <span class="n">utr_five_gff_df</span> <span class="o">=</span> <span class="n">gff_df</span><span class="p">[</span><span class="n">gff_df</span><span class="p">[</span><span class="s1">&#39;type&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">isin</span><span class="p">([</span><span class="s1">&#39;five_prime_UTR&#39;</span><span class="p">])]</span><span class="o">.</span><span class="n">copy</span><span class="p">()</span>
+    <span class="n">utr_three_gff_df</span> <span class="o">=</span> <span class="n">gff_df</span><span class="p">[</span><span class="n">gff_df</span><span class="p">[</span><span class="s1">&#39;type&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">isin</span><span class="p">([</span><span class="s1">&#39;three_prime_UTR&#39;</span><span class="p">])]</span><span class="o">.</span><span class="n">copy</span><span class="p">()</span>
+
+    <span class="k">del</span> <span class="n">gff_df</span>
+
+    <span class="n">base</span><span class="o">.</span><span class="n">upsert</span><span class="p">(</span>
+        <span class="n">session</span><span class="p">,</span>
+        <span class="n">base</span><span class="o">.</span><span class="n">Dataset</span><span class="p">,</span>
+        <span class="n">name</span><span class="o">=</span><span class="s1">&#39;ENSEMBL&#39;</span><span class="p">,</span>
+        <span class="n">description</span><span class="o">=</span><span class="s1">&#39;Automated ENSEMBL/GENCODE annotations&#39;</span><span class="p">,</span>
+        <span class="nb">type</span><span class="o">=</span><span class="s1">&#39;dataset&#39;</span><span class="p">,</span>
+        <span class="n">attrs</span><span class="o">=</span><span class="p">{</span><span class="s1">&#39;version&#39;</span><span class="p">:</span> <span class="n">version</span><span class="p">}</span>
+    <span class="p">)</span>
+    <span class="n">base</span><span class="o">.</span><span class="n">upsert</span><span class="p">(</span>
+        <span class="n">session</span><span class="p">,</span>
+        <span class="n">base</span><span class="o">.</span><span class="n">Dataset</span><span class="p">,</span>
+        <span class="n">name</span><span class="o">=</span><span class="s1">&#39;HAVANA&#39;</span><span class="p">,</span>
+        <span class="n">description</span><span class="o">=</span><span class="s1">&#39;Manual ENSEMBL/GENCODE annotations&#39;</span><span class="p">,</span>
+        <span class="nb">type</span><span class="o">=</span><span class="s1">&#39;dataset&#39;</span><span class="p">,</span>
+        <span class="n">attrs</span><span class="o">=</span><span class="p">{</span><span class="s1">&#39;version&#39;</span><span class="p">:</span> <span class="n">version</span><span class="p">}</span>
+    <span class="p">)</span>
+    <span class="n">base</span><span class="o">.</span><span class="n">upsert</span><span class="p">(</span>
+        <span class="n">session</span><span class="p">,</span>
+        <span class="n">base</span><span class="o">.</span><span class="n">Dataset</span><span class="p">,</span>
+        <span class="n">name</span><span class="o">=</span><span class="s1">&#39;CCDS&#39;</span><span class="p">,</span>
+        <span class="n">description</span><span class="o">=</span><span class="s1">&#39;CCDS consensus cds project&#39;</span><span class="p">,</span>
+        <span class="nb">type</span><span class="o">=</span><span class="s1">&#39;dataset&#39;</span>
+    <span class="p">)</span>
+    <span class="n">base</span><span class="o">.</span><span class="n">upsert</span><span class="p">(</span>
+        <span class="n">session</span><span class="p">,</span>
+        <span class="n">base</span><span class="o">.</span><span class="n">Dataset</span><span class="p">,</span>
+        <span class="n">name</span><span class="o">=</span><span class="s1">&#39;HGNC_ID&#39;</span><span class="p">,</span>
+        <span class="n">description</span><span class="o">=</span><span class="s1">&#39;HUGO Human gene nomenclature numeric gene IDs&#39;</span><span class="p">,</span>
+        <span class="nb">type</span><span class="o">=</span><span class="s1">&#39;dataset&#39;</span><span class="p">,</span>
+        <span class="n">attrs</span><span class="o">=</span><span class="p">{</span><span class="s1">&#39;version&#39;</span><span class="p">:</span> <span class="n">version</span><span class="p">}</span>
+    <span class="p">)</span>
+    <span class="n">base</span><span class="o">.</span><span class="n">upsert</span><span class="p">(</span>
+        <span class="n">session</span><span class="p">,</span>
+        <span class="n">base</span><span class="o">.</span><span class="n">Dataset</span><span class="p">,</span>
+        <span class="n">name</span><span class="o">=</span><span class="s1">&#39;HGNC_SYMBOL&#39;</span><span class="p">,</span>
+        <span class="n">description</span><span class="o">=</span><span class="s1">&#39;HUGO Human gene nomenclature symbols&#39;</span><span class="p">,</span>
+        <span class="nb">type</span><span class="o">=</span><span class="s1">&#39;dataset&#39;</span><span class="p">,</span>
+        <span class="n">attrs</span><span class="o">=</span><span class="p">{</span><span class="s1">&#39;version&#39;</span><span class="p">:</span> <span class="n">version</span><span class="p">}</span>
+    <span class="p">)</span>
+
+    <span class="n">logging</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s1">&#39;Loading GENCODE genes&#39;</span><span class="p">)</span>
+    <span class="n">annotation_loading</span><span class="o">.</span><span class="n">load_gencode_genes</span><span class="p">(</span><span class="n">session</span><span class="p">,</span> <span class="n">gene_gff_df</span><span class="p">)</span>
+
+    <span class="n">logging</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s1">&#39;Loading GENCODE exons&#39;</span><span class="p">)</span>
+    <span class="n">annotation_loading</span><span class="o">.</span><span class="n">load_gencode_exons</span><span class="p">(</span><span class="n">session</span><span class="p">,</span> <span class="n">exon_gff_df</span><span class="p">)</span>
+
+    <span class="n">logging</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s1">&#39;Loading GENCODE transcripts&#39;</span><span class="p">)</span>
+    <span class="n">transcript_exon_map</span> <span class="o">=</span> <span class="n">annotation_loading</span><span class="o">.</span><span class="n">load_gencode_transcripts</span><span class="p">(</span>
+        <span class="n">session</span><span class="p">,</span> <span class="n">tx_gff_df</span><span class="p">,</span> <span class="n">exon_gff_df</span><span class="p">,</span> <span class="n">gencode_dir</span><span class="p">,</span> <span class="n">version</span><span class="p">)</span>
+
+    <span class="n">logging</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s1">&#39;Loading GENCODE transcript &lt;-&gt; exon relationships&#39;</span><span class="p">)</span>
+    <span class="n">annotation_loading</span><span class="o">.</span><span class="n">load_gencode_transcript_exons</span><span class="p">(</span>
+        <span class="n">session</span><span class="p">,</span> <span class="n">transcript_exon_map</span><span class="p">)</span>
+
+    <span class="n">logging</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s1">&#39;Loading GENCODE UTRs&#39;</span><span class="p">)</span>
+    <span class="n">annotation_loading</span><span class="o">.</span><span class="n">load_gencode_utr</span><span class="p">(</span>
+        <span class="n">session</span><span class="p">,</span> <span class="n">utr_five_gff_df</span><span class="p">,</span> <span class="n">base</span><span class="o">.</span><span class="n">UtrFive</span><span class="p">)</span>
+    <span class="n">annotation_loading</span><span class="o">.</span><span class="n">load_gencode_utr</span><span class="p">(</span>
+        <span class="n">session</span><span class="p">,</span> <span class="n">utr_three_gff_df</span><span class="p">,</span> <span class="n">base</span><span class="o">.</span><span class="n">UtrThree</span><span class="p">)</span>
+
+    <span class="n">logging</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s1">&#39;Loading GENCODE cds&#39;</span><span class="p">)</span>
+    <span class="n">annotation_loading</span><span class="o">.</span><span class="n">load_gencode_cds</span><span class="p">(</span><span class="n">session</span><span class="p">,</span> <span class="n">cds_gff_df</span><span class="p">)</span>
+    
+    <span class="n">logging</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s1">&#39;Loading GENCODE ORFs&#39;</span><span class="p">)</span>
+    <span class="c1">#cds_orf_map = annotation_loading.load_gencode_orfs(</span>
+    <span class="c1">#    session, cds_gff_df, assembly_ids)</span>
+    <span class="c1">#annotation_loading.load_gencode_orf_cds(session, cds_orf_map)</span>
+
+    <span class="c1"># Load Ribo-seq ORFs</span>
+    <span class="n">bed_cols</span> <span class="o">=</span> <span class="p">[</span>
+        <span class="s1">&#39;chrom&#39;</span><span class="p">,</span> <span class="s1">&#39;chromStart&#39;</span><span class="p">,</span> <span class="s1">&#39;chromEnd&#39;</span><span class="p">,</span> <span class="s1">&#39;name&#39;</span><span class="p">,</span> <span class="s1">&#39;score&#39;</span><span class="p">,</span>
+        <span class="s1">&#39;strand&#39;</span><span class="p">,</span> <span class="s1">&#39;thickStart&#39;</span><span class="p">,</span> <span class="s1">&#39;thickEnd&#39;</span><span class="p">,</span> <span class="s1">&#39;itemRgb&#39;</span><span class="p">,</span>
+        <span class="s1">&#39;blockCount&#39;</span><span class="p">,</span> <span class="s1">&#39;blockSizes&#39;</span><span class="p">,</span> <span class="s1">&#39;chromStarts&#39;</span><span class="p">,</span> <span class="s1">&#39;name2&#39;</span><span class="p">,</span>
+        <span class="s1">&#39;cdsStartStat&#39;</span><span class="p">,</span> <span class="s1">&#39;cdsEndStat&#39;</span><span class="p">,</span> <span class="s1">&#39;exonFrames&#39;</span><span class="p">,</span> <span class="s1">&#39;type&#39;</span><span class="p">,</span>
+        <span class="s1">&#39;geneName&#39;</span><span class="p">,</span> <span class="s1">&#39;geneName2&#39;</span><span class="p">,</span> <span class="s1">&#39;geneType&#39;</span><span class="p">,</span> <span class="s1">&#39;transcript_biotype&#39;</span><span class="p">,</span>
+        <span class="s1">&#39;sequence&#39;</span><span class="p">,</span> <span class="s1">&#39;all_transcript_ids&#39;</span><span class="p">,</span> <span class="s1">&#39;all_gene_ids&#39;</span><span class="p">,</span>
+        <span class="s1">&#39;replicated&#39;</span><span class="p">,</span> <span class="s1">&#39;ref_studies&#39;</span>
+    <span class="p">]</span>
+
+    <span class="n">orf_bed_df</span> <span class="o">=</span> <span class="n">pd</span><span class="o">.</span><span class="n">read_csv</span><span class="p">(</span>
+        <span class="n">gencode_dir</span><span class="o">.</span><span class="n">joinpath</span><span class="p">(</span><span class="n">version</span><span class="p">,</span> <span class="s1">&#39;Ribo-seq_ORFs.bed&#39;</span><span class="p">),</span>
+        <span class="n">names</span><span class="o">=</span><span class="n">bed_cols</span><span class="p">,</span>
+        <span class="n">sep</span><span class="o">=</span><span class="s1">&#39;</span><span class="se">\t</span><span class="s1">&#39;</span>
+    <span class="p">)</span>
+
+
+    <span class="n">logging</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s1">&#39;Loading GENCODE Riboseq ORFs&#39;</span><span class="p">)</span>
+    <span class="c1">#(transcript_exon_rb_map,</span>
+    <span class="c1"># transcript_orf_map,</span>
+    <span class="c1"># exon_cds_map,</span>
+    <span class="c1"># cds_orf_map) = annotation_loading.load_gencode_riboseq_orfs(</span>
+    <span class="c1">#    session, orf_bed_df, assembly_ids, genome_seq)</span>
+
+    <span class="c1">#annotation_loading.load_gencode_riboseq_orf_cds(session, cds_orf_map)</span>
+
+    <span class="n">logging</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s1">&#39;Loading GENCODE transcript &lt;-&gt; exon relationships for &#39;</span>
+                <span class="s1">&#39;riboseq orfs&#39;</span><span class="p">)</span>
+    <span class="c1">#annotation_loading.load_gencode_riboseq_transcript_exons(</span>
+    <span class="c1">#    session, transcript_exon_rb_map)</span>
+    
+    <span class="n">logging</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s1">&#39;Loading GENCODE transcript &lt;-&gt; ORF relationships&#39;</span><span class="p">)</span>
+    <span class="c1">#annotation_loading.load_gencode_riboseq_transcript_orfs(</span>
+    <span class="c1">#    session, transcript_orf_map)</span>
+    <span class="c1">#annotation_loading.load_gencode_transcript_orfs(</span>
+    <span class="c1">#    session, tx_gff_df, assembly_ids)</span>
+
+    <span class="n">logging</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s1">&#39;Loading GENCODE exon &lt;-&gt; cds relationships&#39;</span><span class="p">)</span>
+    <span class="c1">#annotation_loading.load_gencode_riboseq_exon_cds(</span>
+    <span class="c1">#     session, exon_cds_map)</span>
+    <span class="n">annotation_loading</span><span class="o">.</span><span class="n">load_gencode_exon_cds</span><span class="p">(</span>
+        <span class="n">session</span><span class="p">,</span> <span class="n">cds_gff_df</span><span class="p">)</span>
+
+    <span class="c1"># Free up memory</span>
+    <span class="k">del</span> <span class="n">gene_gff_df</span>
+    <span class="k">del</span> <span class="n">tx_gff_df</span>
+    <span class="k">del</span> <span class="n">exon_gff_df</span>
+    <span class="k">del</span> <span class="n">cds_gff_df</span>
+    <span class="k">del</span> <span class="n">utr_five_gff_df</span>
+    <span class="k">del</span> <span class="n">utr_three_gff_df</span></div>
+
+
+
+<div class="viewcode-block" id="load_refseq_gff">
+<a class="viewcode-back" href="../../modules/load_db.html#orfdb.load_db.load_refseq_gff">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">load_refseq_gff</span><span class="p">(</span><span class="n">session</span><span class="p">,</span> <span class="n">refseq_dir</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Load RefSeq annotations from GFF files.</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        session: SQLAlchemy session object</span>
+<span class="sd">        refseq_dir (Path): Directory containing RefSeq files</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">refseq_gff</span> <span class="o">=</span> <span class="n">refseq_dir</span><span class="o">.</span><span class="n">joinpath</span><span class="p">(</span>
+        <span class="s1">&#39;GCF_000001405.40_GRCh38.p14_genomic.gff.gz&#39;</span>
+    <span class="p">)</span>
+    <span class="n">refseq_df</span> <span class="o">=</span> <span class="n">pd</span><span class="o">.</span><span class="n">read_csv</span><span class="p">(</span>
+        <span class="n">refseq_gff</span><span class="p">,</span>
+        <span class="n">sep</span><span class="o">=</span><span class="s1">&#39;</span><span class="se">\t</span><span class="s1">&#39;</span><span class="p">,</span>
+        <span class="n">dtype</span><span class="o">=</span><span class="p">{</span><span class="s1">&#39;HGNC_ID&#39;</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="s1">&#39;entrez_gene_id&#39;</span><span class="p">:</span> <span class="nb">str</span><span class="p">},</span>
+        <span class="n">compression</span><span class="o">=</span><span class="s1">&#39;gzip&#39;</span> <span class="k">if</span> <span class="nb">str</span><span class="p">(</span><span class="n">refseq_gff</span><span class="p">)</span><span class="o">.</span><span class="n">endswith</span><span class="p">(</span><span class="s1">&#39;.gz&#39;</span><span class="p">)</span> <span class="k">else</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">comment</span><span class="o">=</span><span class="s1">&#39;#&#39;</span><span class="p">,</span>
+        <span class="n">names</span><span class="o">=</span><span class="p">[</span>
+            <span class="s1">&#39;seq_id&#39;</span><span class="p">,</span> <span class="s1">&#39;source&#39;</span><span class="p">,</span> <span class="s1">&#39;type&#39;</span><span class="p">,</span> <span class="s1">&#39;start&#39;</span><span class="p">,</span> <span class="s1">&#39;end&#39;</span><span class="p">,</span> <span class="s1">&#39;score&#39;</span><span class="p">,</span> <span class="s1">&#39;strand&#39;</span><span class="p">,</span>
+            <span class="s1">&#39;phase&#39;</span><span class="p">,</span> <span class="s1">&#39;attributes&#39;</span>
+        <span class="p">]</span>
+    <span class="p">)</span>
+    <span class="n">refseq_df</span><span class="o">.</span><span class="n">fillna</span><span class="p">(</span><span class="s1">&#39;&#39;</span><span class="p">,</span> <span class="n">inplace</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+    <span class="n">assembly_ids</span> <span class="o">=</span> <span class="p">{}</span>
+    <span class="k">for</span> <span class="n">assembly</span> <span class="ow">in</span> <span class="n">session</span><span class="o">.</span><span class="n">query</span><span class="p">(</span><span class="n">base</span><span class="o">.</span><span class="n">Assembly</span><span class="p">)</span><span class="o">.</span><span class="n">all</span><span class="p">():</span>
+        <span class="k">if</span> <span class="n">assembly</span><span class="o">.</span><span class="n">ucsc_style_name</span><span class="o">.</span><span class="n">startswith</span><span class="p">(</span><span class="s1">&#39;chr&#39;</span><span class="p">)</span> <span class="ow">and</span> \
+           <span class="nb">len</span><span class="p">(</span><span class="n">assembly</span><span class="o">.</span><span class="n">ucsc_style_name</span><span class="p">)</span> <span class="o">&lt;</span> <span class="mi">6</span><span class="p">:</span>
+            <span class="n">assembly_ids</span><span class="p">[</span><span class="n">assembly</span><span class="o">.</span><span class="n">ucsc_style_name</span><span class="p">]</span> <span class="o">=</span> <span class="n">assembly</span><span class="o">.</span><span class="n">id</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">assembly_ids</span><span class="p">[</span><span class="n">assembly</span><span class="o">.</span><span class="n">genbank_accession</span><span class="p">]</span> <span class="o">=</span> <span class="n">assembly</span><span class="o">.</span><span class="n">id</span>
+
+    <span class="n">refseq_df</span><span class="p">[</span><span class="s1">&#39;assembly_id&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="n">refseq_df</span><span class="p">[</span><span class="s1">&#39;seq_id&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">apply</span><span class="p">(</span>
+        <span class="k">lambda</span> <span class="n">x</span><span class="p">:</span> <span class="nb">int</span><span class="p">(</span><span class="n">assembly_ids</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="o">-</span><span class="mi">1</span><span class="p">))</span>
+    <span class="p">)</span>
+
+    <span class="n">refseq_df</span> <span class="o">=</span> <span class="n">refseq_df</span><span class="p">[</span><span class="n">refseq_df</span><span class="p">[</span><span class="s1">&#39;assembly_id&#39;</span><span class="p">]</span> <span class="o">!=</span> <span class="o">-</span><span class="mi">1</span><span class="p">]</span><span class="o">.</span><span class="n">copy</span><span class="p">()</span>
+
+    <span class="c1"># Filter dataframes by type</span>
+    <span class="n">gene_gff_df</span> <span class="o">=</span> <span class="n">refseq_df</span><span class="p">[</span><span class="n">refseq_df</span><span class="p">[</span><span class="s1">&#39;type&#39;</span><span class="p">]</span> <span class="o">==</span> <span class="s1">&#39;gene&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">copy</span><span class="p">()</span>
+    <span class="n">tx_gff_df</span> <span class="o">=</span> <span class="n">refseq_df</span><span class="p">[</span><span class="n">refseq_df</span><span class="p">[</span><span class="s1">&#39;type&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">isin</span><span class="p">(</span>
+        <span class="p">[</span><span class="s1">&#39;mRNA&#39;</span><span class="p">,</span> <span class="s1">&#39;lnc_RNA&#39;</span><span class="p">,</span> <span class="s1">&#39;transcript&#39;</span><span class="p">])]</span><span class="o">.</span><span class="n">copy</span><span class="p">()</span>
+    <span class="n">exon_gff_df</span> <span class="o">=</span> <span class="n">refseq_df</span><span class="p">[</span><span class="n">refseq_df</span><span class="p">[</span><span class="s1">&#39;type&#39;</span><span class="p">]</span> <span class="o">==</span> <span class="s1">&#39;exon&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">copy</span><span class="p">()</span>
+    <span class="n">cds_gff_df</span> <span class="o">=</span> <span class="n">refseq_df</span><span class="p">[</span><span class="n">refseq_df</span><span class="p">[</span><span class="s1">&#39;type&#39;</span><span class="p">]</span> <span class="o">==</span> <span class="s1">&#39;CDS&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">copy</span><span class="p">()</span>
+
+    <span class="c1"># Create dataset</span>
+    <span class="n">refseq_dataset</span> <span class="o">=</span> <span class="n">base</span><span class="o">.</span><span class="n">upsert</span><span class="p">(</span>
+        <span class="n">session</span><span class="p">,</span>
+        <span class="n">base</span><span class="o">.</span><span class="n">Dataset</span><span class="p">,</span>
+        <span class="n">name</span><span class="o">=</span><span class="s2">&quot;RefSeq&quot;</span><span class="p">,</span>
+        <span class="n">description</span><span class="o">=</span><span class="s2">&quot;NCBI Genome Annotation from gff&quot;</span><span class="p">,</span>
+        <span class="nb">type</span><span class="o">=</span><span class="s2">&quot;dataset&quot;</span><span class="p">,</span>
+        <span class="n">attrs</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;version&quot;</span><span class="p">:</span> <span class="s2">&quot;GCA_000001405.15_GRCh38&quot;</span><span class="p">}</span>
+    <span class="p">)</span>
+
+    <span class="k">for</span> <span class="n">source</span> <span class="ow">in</span> <span class="nb">set</span><span class="p">(</span><span class="n">refseq_df</span><span class="p">[</span><span class="s1">&#39;source&#39;</span><span class="p">]):</span>
+        <span class="n">base</span><span class="o">.</span><span class="n">upsert</span><span class="p">(</span>
+            <span class="n">session</span><span class="p">,</span>
+            <span class="n">base</span><span class="o">.</span><span class="n">Dataset</span><span class="p">,</span>
+            <span class="n">name</span><span class="o">=</span><span class="n">source</span><span class="p">,</span>
+            <span class="n">description</span><span class="o">=</span><span class="s1">&#39;&#39;</span><span class="p">,</span>
+            <span class="nb">type</span><span class="o">=</span><span class="s2">&quot;dataset&quot;</span><span class="p">,</span>
+            <span class="n">attrs</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;version&quot;</span><span class="p">:</span> <span class="s2">&quot;GCA_000001405.15_GRCh38&quot;</span><span class="p">}</span>
+        <span class="p">)</span>
+
+    
+    <span class="c1"># Load RefSeq components</span>
+    <span class="n">logging</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s1">&#39;Loading RefSeq genes&#39;</span><span class="p">)</span>
+    <span class="n">annotation_loading</span><span class="o">.</span><span class="n">load_refseq_genes</span><span class="p">(</span><span class="n">session</span><span class="p">,</span> <span class="n">gene_gff_df</span><span class="p">)</span>
+    
+    <span class="n">logging</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s1">&#39;Loading RefSeq exons&#39;</span><span class="p">)</span>
+    <span class="n">annotation_loading</span><span class="o">.</span><span class="n">load_refseq_exons</span><span class="p">(</span><span class="n">session</span><span class="p">,</span> <span class="n">exon_gff_df</span><span class="p">)</span>
+
+    <span class="n">logging</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s1">&#39;Loading RefSeq transcripts&#39;</span><span class="p">)</span>
+    <span class="n">transcript_exon_map</span> <span class="o">=</span> <span class="n">annotation_loading</span><span class="o">.</span><span class="n">load_refseq_transcripts</span><span class="p">(</span>
+        <span class="n">session</span><span class="p">,</span> <span class="n">tx_gff_df</span><span class="p">,</span> <span class="n">exon_gff_df</span><span class="p">)</span>
+
+    <span class="n">logging</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s1">&#39;Loading RefSeq transcript &lt;-&gt; exon mappings&#39;</span><span class="p">)</span>
+    <span class="n">annotation_loading</span><span class="o">.</span><span class="n">load_refseq_transcript_exons</span><span class="p">(</span>
+        <span class="n">session</span><span class="p">,</span> <span class="n">transcript_exon_map</span><span class="p">)</span>
+
+    <span class="n">logging</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s1">&#39;Loading RefSeq CDS&#39;</span><span class="p">)</span>
+    <span class="n">annotation_loading</span><span class="o">.</span><span class="n">load_refseq_cds</span><span class="p">(</span><span class="n">session</span><span class="p">,</span> <span class="n">cds_gff_df</span><span class="p">)</span></div>
+
+
+
+<div class="viewcode-block" id="load_chess_gff">
+<a class="viewcode-back" href="../../modules/load_db.html#orfdb.load_db.load_chess_gff">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">load_chess_gff</span><span class="p">(</span><span class="n">session</span><span class="p">,</span> <span class="n">chess_dir</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Load CHESS annotations from GFF files.</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        session: SQLAlchemy session object</span>
+<span class="sd">        chess_dir (Path): Directory containing CHESS files</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">chess_gff</span> <span class="o">=</span> <span class="n">chess_dir</span><span class="o">.</span><span class="n">joinpath</span><span class="p">(</span><span class="s1">&#39;chess3.0.gff.gz&#39;</span><span class="p">)</span>
+    <span class="n">chess_df</span> <span class="o">=</span> <span class="n">pd</span><span class="o">.</span><span class="n">read_csv</span><span class="p">(</span>
+        <span class="n">chess_gff</span><span class="p">,</span>
+        <span class="n">sep</span><span class="o">=</span><span class="s1">&#39;</span><span class="se">\t</span><span class="s1">&#39;</span><span class="p">,</span>
+        <span class="n">compression</span><span class="o">=</span><span class="s1">&#39;gzip&#39;</span> <span class="k">if</span> <span class="nb">str</span><span class="p">(</span><span class="n">chess_gff</span><span class="p">)</span><span class="o">.</span><span class="n">endswith</span><span class="p">(</span><span class="s1">&#39;.gz&#39;</span><span class="p">)</span> <span class="k">else</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">low_memory</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+        <span class="n">comment</span><span class="o">=</span><span class="s1">&#39;#&#39;</span><span class="p">,</span>
+        <span class="n">names</span><span class="o">=</span><span class="p">[</span>
+            <span class="s1">&#39;seq_id&#39;</span><span class="p">,</span> <span class="s1">&#39;source&#39;</span><span class="p">,</span> <span class="s1">&#39;type&#39;</span><span class="p">,</span> <span class="s1">&#39;start&#39;</span><span class="p">,</span> <span class="s1">&#39;end&#39;</span><span class="p">,</span> <span class="s1">&#39;score&#39;</span><span class="p">,</span> <span class="s1">&#39;strand&#39;</span><span class="p">,</span>
+            <span class="s1">&#39;phase&#39;</span><span class="p">,</span> <span class="s1">&#39;attributes&#39;</span>
+        <span class="p">]</span>
+    <span class="p">)</span>
+    <span class="n">chess_df</span><span class="o">.</span><span class="n">fillna</span><span class="p">(</span><span class="s1">&#39;&#39;</span><span class="p">,</span> <span class="n">inplace</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+    <span class="n">assembly_ids</span> <span class="o">=</span> <span class="p">{}</span>
+    <span class="k">for</span> <span class="n">assembly</span> <span class="ow">in</span> <span class="n">session</span><span class="o">.</span><span class="n">query</span><span class="p">(</span><span class="n">base</span><span class="o">.</span><span class="n">Assembly</span><span class="p">)</span><span class="o">.</span><span class="n">all</span><span class="p">():</span>
+        <span class="k">if</span> <span class="n">assembly</span><span class="o">.</span><span class="n">ucsc_style_name</span><span class="o">.</span><span class="n">startswith</span><span class="p">(</span><span class="s1">&#39;chr&#39;</span><span class="p">)</span> <span class="ow">and</span> \
+           <span class="nb">len</span><span class="p">(</span><span class="n">assembly</span><span class="o">.</span><span class="n">ucsc_style_name</span><span class="p">)</span> <span class="o">&lt;</span> <span class="mi">6</span><span class="p">:</span>
+            <span class="n">assembly_ids</span><span class="p">[</span><span class="n">assembly</span><span class="o">.</span><span class="n">ucsc_style_name</span><span class="p">]</span> <span class="o">=</span> <span class="n">assembly</span><span class="o">.</span><span class="n">id</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">assembly_ids</span><span class="p">[</span><span class="n">assembly</span><span class="o">.</span><span class="n">genbank_accession</span><span class="p">]</span> <span class="o">=</span> <span class="n">assembly</span><span class="o">.</span><span class="n">id</span>
+
+    <span class="n">chess_df</span><span class="p">[</span><span class="s1">&#39;assembly_id&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="n">chess_df</span><span class="p">[</span><span class="s1">&#39;seq_id&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">apply</span><span class="p">(</span>
+        <span class="k">lambda</span> <span class="n">x</span><span class="p">:</span> <span class="nb">int</span><span class="p">(</span><span class="n">assembly_ids</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="o">-</span><span class="mi">1</span><span class="p">))</span>
+    <span class="p">)</span>
+
+    <span class="n">chess_df</span> <span class="o">=</span> <span class="n">chess_df</span><span class="p">[</span><span class="n">chess_df</span><span class="p">[</span><span class="s1">&#39;assembly_id&#39;</span><span class="p">]</span> <span class="o">!=</span> <span class="o">-</span><span class="mi">1</span><span class="p">]</span><span class="o">.</span><span class="n">copy</span><span class="p">()</span>
+
+    <span class="c1"># Create dataset</span>
+    <span class="n">chess_dataset</span> <span class="o">=</span> <span class="n">base</span><span class="o">.</span><span class="n">upsert</span><span class="p">(</span>
+        <span class="n">session</span><span class="p">,</span>
+        <span class="n">base</span><span class="o">.</span><span class="n">Dataset</span><span class="p">,</span>
+        <span class="n">name</span><span class="o">=</span><span class="s2">&quot;CHESS&quot;</span><span class="p">,</span>
+        <span class="n">description</span><span class="o">=</span><span class="s2">&quot;CHESS annotation source&quot;</span><span class="p">,</span>
+        <span class="nb">type</span><span class="o">=</span><span class="s2">&quot;dataset&quot;</span><span class="p">,</span>
+        <span class="n">attrs</span><span class="o">=</span><span class="p">{</span>
+            <span class="s2">&quot;version&quot;</span><span class="p">:</span> <span class="s2">&quot;GCA_000001405.15_GRCh38&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;chess_version&quot;</span><span class="p">:</span> <span class="mf">3.0</span>
+        <span class="p">}</span>
+    <span class="p">)</span>
+
+    <span class="k">for</span> <span class="n">source</span> <span class="ow">in</span> <span class="nb">set</span><span class="p">(</span><span class="n">chess_df</span><span class="p">[</span><span class="s1">&#39;source&#39;</span><span class="p">]):</span>
+        <span class="n">base</span><span class="o">.</span><span class="n">upsert</span><span class="p">(</span>
+            <span class="n">session</span><span class="p">,</span>
+            <span class="n">base</span><span class="o">.</span><span class="n">Dataset</span><span class="p">,</span>
+            <span class="n">name</span><span class="o">=</span><span class="n">source</span><span class="p">,</span>
+            <span class="n">description</span><span class="o">=</span><span class="s1">&#39;&#39;</span><span class="p">,</span>
+            <span class="nb">type</span><span class="o">=</span><span class="s2">&quot;dataset&quot;</span><span class="p">,</span>
+            <span class="n">attrs</span><span class="o">=</span><span class="p">{</span>
+                <span class="s2">&quot;version&quot;</span><span class="p">:</span> <span class="s2">&quot;GCA_000001405.15_GRCh38&quot;</span><span class="p">,</span>
+                <span class="s2">&quot;chess_version&quot;</span><span class="p">:</span> <span class="mf">3.0</span>
+            <span class="p">}</span>
+        <span class="p">)</span>
+    
+    <span class="c1"># Filter dataframes by type</span>
+    <span class="n">tx_gff_df</span> <span class="o">=</span> <span class="n">chess_df</span><span class="p">[</span><span class="n">chess_df</span><span class="p">[</span><span class="s1">&#39;type&#39;</span><span class="p">]</span> <span class="o">==</span> <span class="s1">&#39;transcript&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">copy</span><span class="p">()</span>
+    <span class="n">exon_gff_df</span> <span class="o">=</span> <span class="n">chess_df</span><span class="p">[</span><span class="n">chess_df</span><span class="p">[</span><span class="s1">&#39;type&#39;</span><span class="p">]</span> <span class="o">==</span> <span class="s1">&#39;exon&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">copy</span><span class="p">()</span>
+    <span class="n">cds_gff_df</span> <span class="o">=</span> <span class="n">chess_df</span><span class="p">[</span><span class="n">chess_df</span><span class="p">[</span><span class="s1">&#39;type&#39;</span><span class="p">]</span> <span class="o">==</span> <span class="s1">&#39;CDS&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">copy</span><span class="p">()</span>
+
+    <span class="c1"># Load CHESS components</span>
+    <span class="n">logging</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s1">&#39;Loading CHESS exons&#39;</span><span class="p">)</span>
+    <span class="n">annotation_loading</span><span class="o">.</span><span class="n">load_chess_exons</span><span class="p">(</span><span class="n">session</span><span class="p">,</span> <span class="n">exon_gff_df</span><span class="p">)</span>
+    
+    <span class="n">logging</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s1">&#39;Loading CHESS transcripts&#39;</span><span class="p">)</span>
+    <span class="n">transcript_exon_map</span> <span class="o">=</span> <span class="n">annotation_loading</span><span class="o">.</span><span class="n">load_chess_transcripts</span><span class="p">(</span>
+        <span class="n">session</span><span class="p">,</span> <span class="n">tx_gff_df</span><span class="p">,</span> <span class="n">exon_gff_df</span><span class="p">)</span>
+
+    <span class="n">logging</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s1">&#39;Loading CHESS transcrips &lt;-&gt; exons&#39;</span><span class="p">)</span>
+    <span class="n">annotation_loading</span><span class="o">.</span><span class="n">load_chess_transcript_exons</span><span class="p">(</span>
+        <span class="n">session</span><span class="p">,</span> <span class="n">transcript_exon_map</span><span class="p">)</span>
+
+    <span class="n">logging</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s1">&#39;Loading CHESS CDS&#39;</span><span class="p">)</span>
+    <span class="n">annotation_loading</span><span class="o">.</span><span class="n">load_chess_cds</span><span class="p">(</span><span class="n">session</span><span class="p">,</span> <span class="n">cds_gff_df</span><span class="p">)</span></div>
+
+
+
+<div class="viewcode-block" id="load_bigprot_tables">
+<a class="viewcode-back" href="../../modules/load_db.html#orfdb.load_db.load_bigprot_tables">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">load_bigprot_tables</span><span class="p">(</span><span class="n">session</span><span class="p">,</span> <span class="n">bigprot_dir</span><span class="p">,</span> <span class="n">overwrite</span><span class="o">=</span><span class="kc">False</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Load BigProt tables from the given directory.</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        session: SQLAlchemy session object</span>
+<span class="sd">        bigprot_dir (Path): Directory containing BigProt files</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">bigprot_version</span> <span class="o">=</span> <span class="s1">&#39;v0.9.5&#39;</span> <span class="c1">#bump_version(settings.bigprot_version)</span>
+    <span class="n">bigprot_dir</span> <span class="o">=</span> <span class="n">bigprot_dir</span><span class="o">.</span><span class="n">joinpath</span><span class="p">(</span><span class="n">bigprot_version</span><span class="p">)</span>
+
+    <span class="n">required_files</span> <span class="o">=</span> <span class="p">[</span>
+        <span class="sa">f</span><span class="s1">&#39;orfset_BigProt_minlen_15_maxlen_999999999_orfs.csv.gz&#39;</span><span class="p">,</span>
+        <span class="sa">f</span><span class="s1">&#39;orfset_BigProt_minlen_15_maxlen_999999999_transcript_orfs.csv.gz&#39;</span><span class="p">,</span>
+        <span class="sa">f</span><span class="s1">&#39;orfset_BigProt_minlen_15_maxlen_999999999_cds_orfs.csv.gz&#39;</span>
+    <span class="p">]</span>
+
+    <span class="n">files_exist</span> <span class="o">=</span> <span class="nb">all</span><span class="p">(</span>
+        <span class="n">bigprot_dir</span><span class="o">.</span><span class="n">joinpath</span><span class="p">(</span><span class="n">filename</span><span class="p">)</span><span class="o">.</span><span class="n">exists</span><span class="p">()</span> 
+        <span class="k">for</span> <span class="n">filename</span> <span class="ow">in</span> <span class="n">required_files</span>
+    <span class="p">)</span>
+
+
+    <span class="nb">print</span><span class="p">([</span><span class="n">bigprot_dir</span><span class="o">.</span><span class="n">joinpath</span><span class="p">(</span><span class="n">filename</span><span class="p">)</span> 
+        <span class="k">for</span> <span class="n">filename</span> <span class="ow">in</span> <span class="n">required_files</span><span class="p">])</span>
+    <span class="nb">print</span><span class="p">(</span><span class="n">files_exist</span><span class="p">)</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">files_exist</span><span class="p">:</span>
+        <span class="n">logging</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s1">&#39;BigProt analysis files missing, running analysis...&#39;</span><span class="p">)</span>
+        <span class="c1">#try:</span>
+        <span class="kn">from</span><span class="w"> </span><span class="nn">orfdb.bigprot.find_orfs</span><span class="w"> </span><span class="kn">import</span> <span class="n">perform_analysis</span>
+        <span class="n">perform_analysis</span><span class="p">(</span>
+            <span class="n">output</span><span class="o">=</span><span class="nb">str</span><span class="p">(</span><span class="n">bigprot_dir</span><span class="p">),</span>
+            <span class="n">verbose</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+            <span class="n">dataset_name</span><span class="o">=</span><span class="s1">&#39;BigProt&#39;</span><span class="p">,</span>
+            <span class="n">genome_fasta_fpath</span><span class="o">=</span><span class="nb">str</span><span class="p">(</span><span class="n">settings</span><span class="o">.</span><span class="n">genomes_directory</span><span class="o">.</span><span class="n">joinpath</span><span class="p">(</span>
+                <span class="s1">&#39;hg38&#39;</span><span class="p">,</span> <span class="s1">&#39;GCA_000001405.28_GRCh38.p13_genomic.fna.gz&#39;</span><span class="p">)),</span>
+            <span class="n">db_settings_fpath</span><span class="o">=</span><span class="nb">str</span><span class="p">(</span><span class="n">Path</span><span class="p">(</span><span class="vm">__file__</span><span class="p">)</span><span class="o">.</span><span class="n">parent</span><span class="o">.</span><span class="n">parent</span> <span class="o">/</span> <span class="s1">&#39;settings.ini&#39;</span><span class="p">),</span>
+            <span class="c1">#gtf_file_fpath=str(settings.gencode_directory.joinpath(</span>
+            <span class="c1">#    &#39;v42&#39;, &#39;gencode.v42.chr_patch_hapl_scaff.annotation.expanded.gff3&#39;)),</span>
+            <span class="n">min_codon_length</span><span class="o">=</span><span class="mi">15</span><span class="p">,</span>
+            <span class="n">max_codon_length</span><span class="o">=</span><span class="mi">999999999</span><span class="p">,</span>
+            <span class="n">skip_annotation</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+            <span class="n">transcript_chunk_size</span><span class="o">=</span><span class="mi">1000</span><span class="p">,</span>
+            <span class="n">max_chunks</span><span class="o">=</span><span class="mi">1000</span><span class="p">,</span>
+            <span class="n">num_processes</span><span class="o">=</span><span class="mi">10</span><span class="p">,</span>
+            <span class="n">accession_namespace</span><span class="o">=</span><span class="s1">&#39;genbank&#39;</span><span class="p">,</span>
+        <span class="p">)</span>
+        <span class="c1">#except Exception as e:</span>
+        <span class="c1">#    logging.error(f&#39;Failed to run BigProt analysis: {str(e)}&#39;)</span>
+       <span class="c1">#     return</span>
+    
+    <span class="k">try</span><span class="p">:</span>
+        <span class="n">logging</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s1">&#39;Loading BigProt ORFs&#39;</span><span class="p">)</span>
+        <span class="n">annotation_loading</span><span class="o">.</span><span class="n">load_bigprot_orfs</span><span class="p">(</span><span class="n">session</span><span class="p">,</span> <span class="n">bigprot_dir</span><span class="p">)</span>
+        
+        <span class="n">logging</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s1">&#39;Loading BigProt transcripts&#39;</span><span class="p">)</span>
+        <span class="n">annotation_loading</span><span class="o">.</span><span class="n">load_bigprot_transcript_orfs</span><span class="p">(</span><span class="n">session</span><span class="p">,</span> <span class="n">bigprot_dir</span><span class="p">)</span>
+        
+        <span class="n">logging</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s1">&#39;Loading BigProt CDS-ORF mappings&#39;</span><span class="p">)</span>
+        <span class="n">annotation_loading</span><span class="o">.</span><span class="n">load_bigprot_cds_orf</span><span class="p">(</span><span class="n">session</span><span class="p">,</span> <span class="n">bigprot_dir</span><span class="p">)</span>
+        
+        <span class="n">session</span><span class="o">.</span><span class="n">commit</span><span class="p">()</span>
+    <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+        <span class="n">session</span><span class="o">.</span><span class="n">rollback</span><span class="p">()</span>
+        <span class="n">logging</span><span class="o">.</span><span class="n">error</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;Failed to load BigProt data: </span><span class="si">{</span><span class="nb">str</span><span class="p">(</span><span class="n">e</span><span class="p">)</span><span class="si">}</span><span class="s1">&#39;</span><span class="p">)</span>
+        <span class="k">raise</span></div>
+
+
+
+<span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s1">&#39;__main__&#39;</span><span class="p">:</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="n">load_db</span><span class="p">()</span>
+    <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+        <span class="n">logging</span><span class="o">.</span><span class="n">error</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Failed to load database: </span><span class="si">{</span><span class="nb">str</span><span class="p">(</span><span class="n">e</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+        <span class="n">sys</span><span class="o">.</span><span class="n">exit</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+</pre></div>
+
+           </div>
+          </div>
+          <footer>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright 2024, orfdb developers.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>

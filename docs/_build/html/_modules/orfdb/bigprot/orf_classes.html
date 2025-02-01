@@ -1,0 +1,377 @@
+
+
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" data-content_root="../../../">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>orfdb.bigprot.orf_classes &mdash; orfdb 1.0 documentation</title>
+      <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css?v=b86133f3" />
+      <link rel="stylesheet" type="text/css" href="../../../_static/css/theme.css?v=e59714d7" />
+
+  
+      <script src="../../../_static/jquery.js?v=5d32c60e"></script>
+      <script src="../../../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+      <script src="../../../_static/documentation_options.js?v=f2a433a1"></script>
+      <script src="../../../_static/doctools.js?v=9a2dae69"></script>
+      <script src="../../../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script src="../../../_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="../../../genindex.html" />
+    <link rel="search" title="Search" href="../../../search.html" /> 
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="../../../index.html" class="icon icon-home">
+            orfdb
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="../../../search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">Contents:</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../modules/base.html">Base Module</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../modules/load_db.html">Database Loading Module</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../modules/annotation_loading.html">Annotation Loading Module</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../modules/settings.html">Settings Module</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../modules/util.html">Utilities Module</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../modules/bigprot.html">BigProt Module</a></li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../../../index.html">orfdb</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="../../../index.html" class="icon icon-home" aria-label="Home"></a></li>
+          <li class="breadcrumb-item"><a href="../../index.html">Module code</a></li>
+      <li class="breadcrumb-item active">orfdb.bigprot.orf_classes</li>
+      <li class="wy-breadcrumbs-aside">
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <h1>Source code for orfdb.bigprot.orf_classes</h1><div class="highlight"><pre>
+<span></span><span class="kn">import</span><span class="w"> </span><span class="nn">gzip</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">json</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">os</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">logging</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">orfdb.bigprot</span><span class="w"> </span><span class="kn">import</span> <span class="n">validation</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">Bio.Seq</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Dict</span><span class="p">,</span> <span class="n">List</span><span class="p">,</span> <span class="n">Union</span>
+
+<span class="n">logger</span> <span class="o">=</span> <span class="n">logging</span><span class="o">.</span><span class="n">getLogger</span><span class="p">(</span><span class="vm">__name__</span><span class="p">)</span>
+
+
+<div class="viewcode-block" id="OrfBase">
+<a class="viewcode-back" href="../../../modules/bigprot.html#orfdb.bigprot.orf_classes.OrfBase">[docs]</a>
+<span class="k">class</span><span class="w"> </span><span class="nc">OrfBase</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Class representing an Open Reading Frame (ORF).</span>
+<span class="sd">    The coordinates are pythonic, i.e. 0-based and half-open intervals (the end position is not in the sequence).</span>
+<span class="sd">    To convert to GFF/Ensembl coordinates, add 1 to the start position and 2 to the end position.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">FIELDS</span> <span class="o">=</span> <span class="p">[</span>
+        <span class="s1">&#39;codon_length&#39;</span><span class="p">,</span>
+        <span class="s1">&#39;nuc_length&#39;</span><span class="p">,</span>
+        <span class="s1">&#39;nuc_sequence&#39;</span><span class="p">,</span>
+        <span class="s1">&#39;parent_sequence_id&#39;</span><span class="p">,</span>
+        <span class="s1">&#39;phase&#39;</span><span class="p">,</span>
+        <span class="s1">&#39;start_codon&#39;</span><span class="p">,</span>
+        <span class="s1">&#39;start_pos&#39;</span><span class="p">,</span>
+        <span class="s1">&#39;end_pos&#39;</span><span class="p">,</span>
+        <span class="s1">&#39;stop_codon&#39;</span><span class="p">,</span>
+        <span class="s1">&#39;strand&#39;</span>
+    <span class="p">]</span>
+
+<div class="viewcode-block" id="OrfBase.__init__">
+<a class="viewcode-back" href="../../../modules/bigprot.html#orfdb.bigprot.orf_classes.OrfBase.__init__">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">parent_sequence_id</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">start_pos</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">strand</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">codons</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">]):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Initialize an OrfBase instance.</span>
+<span class="sd">        :param parent_sequence_id: ID of the parent sequence.</span>
+<span class="sd">        :param start_pos: Start position of the ORF.</span>
+<span class="sd">        :param strand: Strand of the ORF.</span>
+<span class="sd">        :param codons: List of codons in the ORF.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">assert</span> <span class="n">strand</span> <span class="ow">in</span> <span class="p">{</span><span class="s1">&#39;+&#39;</span><span class="p">,</span> <span class="s1">&#39;-&#39;</span><span class="p">},</span> <span class="sa">f</span><span class="s1">&#39;Invalid strand character </span><span class="si">{</span><span class="n">strand</span><span class="si">}</span><span class="s1">!&#39;</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_num_to_codon</span><span class="p">:</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="p">{}</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_num_to_codon</span> <span class="o">=</span> <span class="p">{}</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_codon_to_num</span> <span class="o">=</span> <span class="p">{}</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_curr_codon_num</span> <span class="o">=</span> <span class="mi">0</span>
+
+        <span class="bp">self</span><span class="o">.</span><span class="n">parent_sequence_id</span> <span class="o">=</span> <span class="n">parent_sequence_id</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">start_pos</span> <span class="o">=</span> <span class="n">start_pos</span>
+        <span class="n">validation</span><span class="o">.</span><span class="n">validate_strand</span><span class="p">(</span><span class="n">strand</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">strand</span> <span class="o">=</span> <span class="n">strand</span>
+
+        <span class="bp">self</span><span class="o">.</span><span class="n">_codons</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="k">for</span> <span class="n">codon</span> <span class="ow">in</span> <span class="n">codons</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">add_codon</span><span class="p">(</span><span class="n">codon</span><span class="p">)</span></div>
+
+
+    <span class="nd">@property</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">codons</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Get the codons in the ORF.</span>
+<span class="sd">        :return: List of codons in the ORF.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="p">[</span><span class="bp">self</span><span class="o">.</span><span class="n">_num_to_codon</span><span class="p">[</span><span class="n">num</span><span class="p">]</span> <span class="k">for</span> <span class="n">num</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_codons</span><span class="p">]</span>
+
+<div class="viewcode-block" id="OrfBase.add_codon">
+<a class="viewcode-back" href="../../../modules/bigprot.html#orfdb.bigprot.orf_classes.OrfBase.add_codon">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">add_codon</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">codon</span><span class="p">:</span> <span class="nb">str</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Add a codon to the ORF.</span>
+<span class="sd">        :param codon: Codon to add.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">if</span> <span class="n">codon</span> <span class="ow">not</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_codon_to_num</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_curr_codon_num</span> <span class="o">+=</span> <span class="mi">1</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_num_to_codon</span><span class="p">[</span><span class="bp">self</span><span class="o">.</span><span class="n">_curr_codon_num</span><span class="p">]</span> <span class="o">=</span> <span class="n">codon</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_codon_to_num</span><span class="p">[</span><span class="n">codon</span><span class="p">]</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_curr_codon_num</span>
+
+        <span class="bp">self</span><span class="o">.</span><span class="n">_codons</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_codon_to_num</span><span class="p">[</span><span class="n">codon</span><span class="p">])</span></div>
+
+
+    <span class="nd">@property</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">start_codon</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Get the start codon of the ORF.</span>
+<span class="sd">        :return: Start codon of the ORF, or None if the ORF has no codons.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_codons</span><span class="p">):</span>
+            <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_num_to_codon</span><span class="p">[</span><span class="bp">self</span><span class="o">.</span><span class="n">_codons</span><span class="p">[</span><span class="mi">0</span><span class="p">]]</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="k">return</span> <span class="kc">None</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">stop_codon</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Get the stop codon of the ORF.</span>
+<span class="sd">        :return: Stop codon of the ORF, or None if the ORF has no codons.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_codons</span><span class="p">):</span>
+            <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_num_to_codon</span><span class="p">[</span><span class="bp">self</span><span class="o">.</span><span class="n">_codons</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]]</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="k">return</span> <span class="kc">None</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">codon_length</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Get the length of the ORF in codons.</span>
+<span class="sd">        :return: Length of the ORF in codons.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_codons</span><span class="p">)</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">nuc_length</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Get the length of the ORF in nucleotides.</span>
+<span class="sd">        :return: Length of the ORF in nucleotides.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">codon_length</span> <span class="o">*</span> <span class="mi">3</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">end_pos</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Get the end position of the ORF.</span>
+<span class="sd">        :return: End position of the ORF.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">start_pos</span> <span class="o">+</span> <span class="bp">self</span><span class="o">.</span><span class="n">nuc_length</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">nuc_sequence</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Get the nucleotide sequence of the ORF.</span>
+<span class="sd">        :return: Nucleotide sequence of the ORF.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="s1">&#39;&#39;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">codons</span><span class="p">)</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">aa_sequence</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Get the amino acid sequence of the ORF.</span>
+<span class="sd">        :return: Amino acid sequence of the ORF.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="n">Bio</span><span class="o">.</span><span class="n">Seq</span><span class="o">.</span><span class="n">translate</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">nuc_sequence</span><span class="p">,</span> <span class="n">table</span><span class="o">=</span><span class="s1">&#39;Standard&#39;</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__repr__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Get a string representation of the ORF.</span>
+<span class="sd">        :return: String representation of the ORF.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="sa">f</span><span class="s1">&#39;ORF </span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">parent_sequence_id</span><span class="si">}</span><span class="s1"> </span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">strand</span><span class="si">}</span><span class="s1"> </span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">start_pos</span><span class="si">}</span><span class="s1">-</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">end_pos</span><span class="si">}</span><span class="s1"> </span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">start_codon</span><span class="si">}</span><span class="s1">-</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">stop_codon</span><span class="si">}</span><span class="s1">&#39;</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">unique_id</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Get a unique ID for the ORF.</span>
+<span class="sd">        :return: Unique ID for the ORF.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="sa">f</span><span class="s1">&#39;</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">parent_sequence_id</span><span class="si">}</span><span class="s1">-</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">strand</span><span class="si">}</span><span class="s1">-</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">start_pos</span><span class="si">}</span><span class="s1">-</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">end_pos</span><span class="si">}</span><span class="s1">&#39;</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">description</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Get a description of the ORF.</span>
+<span class="sd">        :return: Description of the ORF.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="sa">f</span><span class="s1">&#39;ORF from </span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">parent_sequence_id</span><span class="si">}</span><span class="s1"> </span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">start_pos</span><span class="si">}</span><span class="s1">-</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">end_pos</span><span class="si">}</span><span class="s1"> on </span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">strand</span><span class="si">}</span><span class="s1"> with start codon </span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">start_codon</span><span class="si">}</span><span class="s1"> and stop codon </span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">stop_codon</span><span class="si">}</span><span class="s1">&#39;</span>
+
+<div class="viewcode-block" id="OrfBase.to_dict">
+<a class="viewcode-back" href="../../../modules/bigprot.html#orfdb.bigprot.orf_classes.OrfBase.to_dict">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">to_dict</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Convert the ORF to a dictionary.</span>
+<span class="sd">        :return: Dictionary representation of the ORF.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">self_dict</span> <span class="o">=</span> <span class="p">{</span><span class="n">field</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="fm">__getattribute__</span><span class="p">(</span>
+            <span class="n">field</span><span class="p">)</span> <span class="k">for</span> <span class="n">field</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">FIELDS</span><span class="p">}</span>
+
+        <span class="k">return</span> <span class="n">self_dict</span></div>
+
+
+<div class="viewcode-block" id="OrfBase.from_dict">
+<a class="viewcode-back" href="../../../modules/bigprot.html#orfdb.bigprot.orf_classes.OrfBase.from_dict">[docs]</a>
+    <span class="nd">@classmethod</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">from_dict</span><span class="p">(</span><span class="bp">cls</span><span class="p">,</span> <span class="n">attribute_dict</span><span class="p">:</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Union</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">int</span><span class="p">,</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">]]]):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Create an OrfBase instance from a dictionary.</span>
+<span class="sd">        :param attribute_dict: Dictionary of attributes.</span>
+<span class="sd">        :return: New OrfBase instance.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">new_orf</span> <span class="o">=</span> <span class="bp">cls</span><span class="p">(</span><span class="n">parent_sequence_id</span><span class="o">=</span><span class="n">attribute_dict</span><span class="p">[</span><span class="s1">&#39;parent_sequence_id&#39;</span><span class="p">],</span>
+                      <span class="n">start_pos</span><span class="o">=</span><span class="n">attribute_dict</span><span class="p">[</span><span class="s1">&#39;start_pos&#39;</span><span class="p">],</span>
+                      <span class="n">strand</span><span class="o">=</span><span class="n">attribute_dict</span><span class="p">[</span><span class="s1">&#39;strand&#39;</span><span class="p">],</span>
+                      <span class="n">codons</span><span class="o">=</span><span class="p">[</span><span class="n">attribute_dict</span><span class="p">[</span><span class="s1">&#39;nuc_sequence&#39;</span><span class="p">][</span><span class="n">pos</span><span class="p">:</span><span class="n">pos</span> <span class="o">+</span> <span class="mi">3</span><span class="p">]</span> <span class="k">for</span> <span class="n">pos</span> <span class="ow">in</span>
+                              <span class="nb">range</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="nb">len</span><span class="p">(</span><span class="n">attribute_dict</span><span class="p">[</span><span class="s1">&#39;nuc_sequence&#39;</span><span class="p">]),</span> <span class="mi">3</span><span class="p">)])</span>
+        <span class="c1"># QC Checks</span>
+        <span class="k">assert</span> <span class="n">new_orf</span><span class="o">.</span><span class="n">codon_length</span> <span class="o">==</span> <span class="n">attribute_dict</span><span class="p">[</span><span class="s1">&#39;codon_length&#39;</span><span class="p">]</span>
+
+        <span class="k">return</span> <span class="n">new_orf</span></div>
+</div>
+
+
+
+<div class="viewcode-block" id="OrfSet">
+<a class="viewcode-back" href="../../../modules/bigprot.html#orfdb.bigprot.orf_classes.OrfSet">[docs]</a>
+<span class="k">class</span><span class="w"> </span><span class="nc">OrfSet</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Class representing a set of ORFs.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+<div class="viewcode-block" id="OrfSet.__init__">
+<a class="viewcode-back" href="../../../modules/bigprot.html#orfdb.bigprot.orf_classes.OrfSet.__init__">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">orfs</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="n">OrfBase</span><span class="p">]):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Initialize an OrfSet instance.</span>
+<span class="sd">        :param orfs: List of ORFs.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">orfs</span> <span class="o">=</span> <span class="n">orfs</span></div>
+
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__len__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Get the number of ORFs in the set.</span>
+<span class="sd">        :return: Number of ORFs in the set.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">orfs</span><span class="p">)</span>
+
+<div class="viewcode-block" id="OrfSet.to_dicts">
+<a class="viewcode-back" href="../../../modules/bigprot.html#orfdb.bigprot.orf_classes.OrfSet.to_dicts">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">to_dicts</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Convert the ORFs in the set to dictionaries.</span>
+<span class="sd">        :return: List of dictionaries representing the ORFs in the set.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="p">[</span><span class="n">orf</span><span class="o">.</span><span class="n">to_dict</span><span class="p">()</span> <span class="k">for</span> <span class="n">orf</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">orfs</span><span class="p">]</span></div>
+
+
+<div class="viewcode-block" id="OrfSet.from_jsons">
+<a class="viewcode-back" href="../../../modules/bigprot.html#orfdb.bigprot.orf_classes.OrfSet.from_jsons">[docs]</a>
+    <span class="nd">@classmethod</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">from_jsons</span><span class="p">(</span><span class="bp">cls</span><span class="p">,</span> <span class="n">jsons</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Union</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">int</span><span class="p">,</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">]]]]):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Create an OrfSet instance from a list of JSON objects.</span>
+<span class="sd">        :param jsons: List of JSON objects representing ORFs.</span>
+<span class="sd">        :return: New OrfSet instance.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="bp">cls</span><span class="p">([</span><span class="n">OrfBase</span><span class="o">.</span><span class="n">from_dict</span><span class="p">(</span><span class="n">json_dict</span><span class="p">)</span> <span class="k">for</span> <span class="n">json_dict</span> <span class="ow">in</span> <span class="n">jsons</span><span class="p">])</span></div>
+
+
+<div class="viewcode-block" id="OrfSet.from_jsonl_file">
+<a class="viewcode-back" href="../../../modules/bigprot.html#orfdb.bigprot.orf_classes.OrfSet.from_jsonl_file">[docs]</a>
+    <span class="nd">@classmethod</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">from_jsonl_file</span><span class="p">(</span><span class="bp">cls</span><span class="p">,</span> <span class="n">jsonl_fpath</span><span class="p">:</span> <span class="nb">str</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Create an OrfSet instance from a JSONL file.</span>
+<span class="sd">        :param jsonl_fpath: Path to the JSONL file.</span>
+<span class="sd">        :return: New OrfSet instance.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;Loading ORFs from </span><span class="si">{</span><span class="n">jsonl_fpath</span><span class="si">}</span><span class="s1"> ...&#39;</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">splitext</span><span class="p">(</span><span class="n">jsonl_fpath</span><span class="p">)[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span> <span class="o">==</span> <span class="s1">&#39;.gz&#39;</span><span class="p">:</span>
+            <span class="n">file_opener</span> <span class="o">=</span> <span class="n">gzip</span><span class="o">.</span><span class="n">open</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">file_opener</span> <span class="o">=</span> <span class="nb">open</span>
+
+        <span class="k">with</span> <span class="n">file_opener</span><span class="p">(</span><span class="n">jsonl_fpath</span><span class="p">,</span> <span class="s1">&#39;rt&#39;</span><span class="p">)</span> <span class="k">as</span> <span class="n">jsonl_file</span><span class="p">:</span>
+            <span class="n">new_orfset</span> <span class="o">=</span> <span class="bp">cls</span><span class="o">.</span><span class="n">from_jsons</span><span class="p">(</span>
+                <span class="p">[</span><span class="n">json</span><span class="o">.</span><span class="n">loads</span><span class="p">(</span><span class="n">line</span><span class="p">)</span> <span class="k">for</span> <span class="n">line</span> <span class="ow">in</span> <span class="n">jsonl_file</span><span class="p">])</span>
+
+        <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;Loaded </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">new_orfset</span><span class="p">)</span><span class="si">}</span><span class="s1"> ORFs ...&#39;</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">new_orfset</span></div>
+</div>
+
+</pre></div>
+
+           </div>
+          </div>
+          <footer>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright 2024, orfdb developers.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>

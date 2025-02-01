@@ -1,0 +1,540 @@
+
+
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" data-content_root="../../../">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>orfdb.bigprot.annotation &mdash; orfdb 1.0 documentation</title>
+      <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css?v=b86133f3" />
+      <link rel="stylesheet" type="text/css" href="../../../_static/css/theme.css?v=e59714d7" />
+
+  
+      <script src="../../../_static/jquery.js?v=5d32c60e"></script>
+      <script src="../../../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+      <script src="../../../_static/documentation_options.js?v=f2a433a1"></script>
+      <script src="../../../_static/doctools.js?v=9a2dae69"></script>
+      <script src="../../../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script src="../../../_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="../../../genindex.html" />
+    <link rel="search" title="Search" href="../../../search.html" /> 
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="../../../index.html" class="icon icon-home">
+            orfdb
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="../../../search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">Contents:</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../modules/base.html">Base Module</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../modules/load_db.html">Database Loading Module</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../modules/annotation_loading.html">Annotation Loading Module</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../modules/settings.html">Settings Module</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../modules/util.html">Utilities Module</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../modules/bigprot.html">BigProt Module</a></li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../../../index.html">orfdb</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="../../../index.html" class="icon icon-home" aria-label="Home"></a></li>
+          <li class="breadcrumb-item"><a href="../../index.html">Module code</a></li>
+      <li class="breadcrumb-item active">orfdb.bigprot.annotation</li>
+      <li class="wy-breadcrumbs-aside">
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <h1>Source code for orfdb.bigprot.annotation</h1><div class="highlight"><pre>
+<span></span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">This module contains functions for computing and validating Open Reading Frames (ORFs).</span>
+
+<span class="sd">It includes functions to compute genomic start of an ORF, exon intervals, chromosomal start positions and block sizes,</span>
+<span class="sd">end phase of each block, ORF value, ORF index, and PhyloCSF statistics for an ORF. It also includes functions to</span>
+<span class="sd">extract and encode numeric vectors, and to populate the VELIA database fields for an ORF.</span>
+<span class="sd">&quot;&quot;&quot;</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">hashlib</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">logging</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">List</span><span class="p">,</span> <span class="n">Tuple</span><span class="p">,</span> <span class="n">Union</span><span class="p">,</span> <span class="n">Dict</span><span class="p">,</span> <span class="n">Set</span><span class="p">,</span> <span class="n">Any</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">Bio.motifs.matrix</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">intervaltree</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">.</span><span class="w"> </span><span class="kn">import</span> <span class="n">bigwig_tracks</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">.</span><span class="w"> </span><span class="kn">import</span> <span class="n">constants</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">.</span><span class="w"> </span><span class="kn">import</span> <span class="n">coordinates</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">.</span><span class="w"> </span><span class="kn">import</span> <span class="n">gwas_tools</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">.</span><span class="w"> </span><span class="kn">import</span> <span class="n">misc</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">.</span><span class="w"> </span><span class="kn">import</span> <span class="n">motif_tools</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">.</span><span class="w"> </span><span class="kn">import</span> <span class="n">orf_classes</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">.</span><span class="w"> </span><span class="kn">import</span> <span class="n">sequence_tools</span>
+
+<span class="n">logger</span> <span class="o">=</span> <span class="n">logging</span><span class="o">.</span><span class="n">getLogger</span><span class="p">(</span><span class="vm">__name__</span><span class="p">)</span>
+
+
+<div class="viewcode-block" id="compute_orf_val">
+<a class="viewcode-back" href="../../../modules/bigprot.html#orfdb.bigprot.annotation.compute_orf_val">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">compute_orf_val</span><span class="p">(</span><span class="n">assembly_id</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+                    <span class="n">start</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+                    <span class="n">end</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+                    <span class="n">strand</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+                    <span class="n">block_sizes</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+                    <span class="n">chrom_starts</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+                    <span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Computes the ORF index string.</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        assembly_id: The assembly ID.</span>
+<span class="sd">        chrom_starts: The chromosomal start positions.</span>
+<span class="sd">        start: The overall start position.</span>
+<span class="sd">        end: The overall end position.</span>
+<span class="sd">        strand: The strand.</span>
+<span class="sd">        block_sizes: The block sizes.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        A string uniquely representing this ORF..</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">return</span> <span class="sa">f</span><span class="s1">&#39;</span><span class="si">{</span><span class="n">assembly_id</span><span class="si">}</span><span class="s1">_</span><span class="si">{</span><span class="n">start</span><span class="si">}</span><span class="s1">_</span><span class="si">{</span><span class="n">end</span><span class="si">}</span><span class="s1">_</span><span class="si">{</span><span class="n">strand</span><span class="si">}</span><span class="s1">_</span><span class="si">{</span><span class="n">chrom_starts</span><span class="si">}</span><span class="s1">_</span><span class="si">{</span><span class="n">block_sizes</span><span class="si">}</span><span class="s1">&#39;</span></div>
+
+
+
+<div class="viewcode-block" id="compute_orf_idx">
+<a class="viewcode-back" href="../../../modules/bigprot.html#orfdb.bigprot.annotation.compute_orf_idx">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">compute_orf_idx</span><span class="p">(</span><span class="n">orf_val</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Computes the ORF index.</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        orf_val: The ORF value.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        The ORF index.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">return</span> <span class="n">hashlib</span><span class="o">.</span><span class="n">sha3_512</span><span class="p">(</span><span class="n">orf_val</span><span class="o">.</span><span class="n">encode</span><span class="p">(</span><span class="s1">&#39;utf-8&#39;</span><span class="p">))</span><span class="o">.</span><span class="n">hexdigest</span><span class="p">()</span></div>
+
+
+
+<div class="viewcode-block" id="populate_velia_db_fields_orf">
+<a class="viewcode-back" href="../../../modules/bigprot.html#orfdb.bigprot.annotation.populate_velia_db_fields_orf">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">populate_velia_db_fields_orf</span><span class="p">(</span><span class="n">orf_object</span><span class="p">:</span> <span class="n">orf_classes</span><span class="o">.</span><span class="n">OrfBase</span><span class="p">,</span>
+                                 <span class="n">parent_transcript_dict</span><span class="p">:</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Union</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">int</span><span class="p">]],</span>
+                                 <span class="n">orf_id</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">&#39;&#39;</span><span class="p">,</span>
+                                 <span class="n">velia_id_value</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="o">-</span><span class="mi">1</span><span class="p">,</span>
+                                 <span class="n">phase_style</span><span class="o">=</span><span class="n">constants</span><span class="o">.</span><span class="n">DEFAULT_PHASE_STYLE</span><span class="p">,</span>
+                                 <span class="n">include_table_name</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Tuple</span><span class="p">[</span>
+        <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Union</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">str</span><span class="p">]],</span> <span class="n">List</span><span class="p">[</span><span class="nb">int</span><span class="p">],</span> <span class="n">List</span><span class="p">[</span><span class="nb">int</span><span class="p">]]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Populates the VELIA database fields for an ORF.</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        orf_object: The ORF object.</span>
+<span class="sd">        parent_transcript_dict: The parent transcript dictionary.</span>
+<span class="sd">        orf_id: The ORF ID. Defaults to an empty string.</span>
+<span class="sd">        velia_id_value: The VELIA ID value. Defaults to -1.</span>
+<span class="sd">        include_table_name: Whether to include the table name. Defaults to True.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        A tuple containing:</span>
+<span class="sd">            orf_attributes: the populated VELIA database fields for the ORF as a dictionary, </span>
+<span class="sd">            exon_indices: A list of integers indicating which of the enumerated exons associated with this parent transcript are overlapped by this ORF</span>
+<span class="sd">            orf_cds_phases: A list of integers indicating the phase of each CDS in this ORF, one per exon that was overlapped by the ORF. </span>
+<span class="sd">            orf_cds_frames: A list of integers indicating the reading frame of each CDS in this ORF, one per exon that was overlapped by the ORF</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span>
+        <span class="s1">&#39;Populating Velia database fields for ORF </span><span class="si">%s</span><span class="s1"> ...&#39;</span><span class="p">,</span> <span class="nb">str</span><span class="p">(</span><span class="n">orf_object</span><span class="p">))</span>
+    <span class="n">assembly_id</span> <span class="o">=</span> <span class="n">parent_transcript_dict</span><span class="p">[</span><span class="s1">&#39;assembly.id&#39;</span><span class="p">]</span>
+
+    <span class="n">py_genomic_start</span> <span class="o">=</span> <span class="n">coordinates</span><span class="o">.</span><span class="n">compute_orf_genomic_start</span><span class="p">(</span><span class="n">orf_object</span><span class="o">=</span><span class="n">orf_object</span><span class="p">,</span>
+                                                             <span class="n">parent_transcript_dict</span><span class="o">=</span><span class="n">parent_transcript_dict</span><span class="p">)</span>
+    <span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="s1">&#39;Computed pythonic genomic start </span><span class="si">%s</span><span class="s1">.&#39;</span><span class="p">,</span> <span class="n">py_genomic_start</span><span class="p">)</span>
+
+    <span class="n">py_chrom_starts</span><span class="p">,</span> <span class="n">py_block_sizes</span><span class="p">,</span> <span class="n">exon_indices</span> <span class="o">=</span> <span class="n">coordinates</span><span class="o">.</span><span class="n">compute_orf_chrom_starts_block_sizes_exons</span><span class="p">(</span>
+        <span class="n">orf_object</span><span class="o">=</span><span class="n">orf_object</span><span class="p">,</span>
+        <span class="n">orf_genomic_start</span><span class="o">=</span><span class="n">py_genomic_start</span><span class="p">,</span>
+        <span class="n">parent_transcript_dict</span><span class="o">=</span><span class="n">parent_transcript_dict</span><span class="p">)</span>
+    <span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="s1">&#39;Computed pythonic chrom starts </span><span class="si">%s</span><span class="s1"> and block sizes </span><span class="si">%s</span><span class="s1">.&#39;</span><span class="p">,</span>
+                 <span class="n">py_chrom_starts</span><span class="p">,</span> <span class="n">py_block_sizes</span><span class="p">)</span>
+
+    <span class="n">gff_chrom_starts</span><span class="p">,</span> <span class="n">gff_block_sizes</span> <span class="o">=</span> <span class="n">coordinates</span><span class="o">.</span><span class="n">convert_chrom_starts_and_block_sizes</span><span class="p">(</span>
+        <span class="n">chrom_starts</span><span class="o">=</span><span class="n">py_chrom_starts</span><span class="p">,</span>
+        <span class="n">block_sizes</span><span class="o">=</span><span class="n">py_block_sizes</span><span class="p">,</span>
+        <span class="n">source_type</span><span class="o">=</span><span class="s1">&#39;python&#39;</span><span class="p">,</span>
+        <span class="n">destination_type</span><span class="o">=</span><span class="s1">&#39;gff&#39;</span><span class="p">)</span>
+    <span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="s1">&#39;Computed GFF-style chrom starts </span><span class="si">%s</span><span class="s1"> and block sizes </span><span class="si">%s</span><span class="s1">.&#39;</span><span class="p">,</span>
+                 <span class="n">gff_chrom_starts</span><span class="p">,</span> <span class="n">gff_block_sizes</span><span class="p">)</span>
+
+    <span class="n">py_genomic_end</span> <span class="o">=</span> <span class="n">py_chrom_starts</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span> <span class="o">+</span> <span class="n">py_block_sizes</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>
+    <span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="s1">&#39;Computed pythonic genomic end </span><span class="si">%s</span><span class="s1">&#39;</span><span class="p">,</span> <span class="n">py_genomic_end</span><span class="p">)</span>
+
+    <span class="n">gff_genomic_start</span><span class="p">,</span> <span class="n">gff_genomic_end</span> <span class="o">=</span> <span class="n">coordinates</span><span class="o">.</span><span class="n">PythonInterval</span><span class="p">(</span><span class="n">start</span><span class="o">=</span><span class="n">py_genomic_start</span><span class="p">,</span>
+                                                                    <span class="n">end</span><span class="o">=</span><span class="n">py_genomic_end</span><span class="p">)</span><span class="o">.</span><span class="n">gff_interval</span>
+    <span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="s1">&#39;Computed GFF-style start-end: </span><span class="si">%s</span><span class="s1">-</span><span class="si">%s</span><span class="s1">&#39;</span><span class="p">,</span>
+                 <span class="n">gff_genomic_start</span><span class="p">,</span> <span class="n">gff_genomic_end</span><span class="p">)</span>
+
+    <span class="k">assert</span> <span class="n">gff_genomic_start</span> <span class="o">==</span> <span class="n">gff_chrom_starts</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="s1">&#39;Incorrect ORF start for ORF </span><span class="si">%s</span><span class="s1">: </span><span class="si">%s</span><span class="s1">&#39;</span> <span class="o">%</span> <span class="p">(</span>
+        <span class="n">orf_object</span><span class="p">,</span> <span class="n">gff_genomic_start</span><span class="p">)</span>
+
+    <span class="n">orf_cds_phases</span><span class="p">,</span> <span class="n">orf_cds_frames</span> <span class="o">=</span> <span class="n">coordinates</span><span class="o">.</span><span class="n">compute_cds_phases_and_frames</span><span class="p">(</span><span class="n">py_chrom_starts</span><span class="o">=</span><span class="n">py_chrom_starts</span><span class="p">,</span>
+                                                                    <span class="n">py_block_sizes</span><span class="o">=</span><span class="n">py_block_sizes</span><span class="p">,</span>
+                                                                    <span class="n">strand</span><span class="o">=</span><span class="n">orf_object</span><span class="o">.</span><span class="n">strand</span><span class="p">,</span>
+                                                                    <span class="n">chrom_length</span><span class="o">=</span><span class="n">parent_transcript_dict</span><span class="p">[</span>
+                                                                        <span class="s1">&#39;assembly.sequence_length&#39;</span><span class="p">],</span>
+                                                                    <span class="n">phase_style</span><span class="o">=</span><span class="n">phase_style</span><span class="p">)</span>
+    <span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="s1">&#39;Got CDS phases </span><span class="si">%s</span><span class="s1"> and frames </span><span class="si">%s</span><span class="s1"> for ORF </span><span class="si">%s</span><span class="s1">&#39;</span><span class="p">,</span>
+                 <span class="n">orf_cds_phases</span><span class="p">,</span> <span class="n">orf_cds_frames</span><span class="p">,</span> <span class="n">orf_object</span><span class="p">)</span>
+
+    <span class="n">gff_chrom_starts_string</span> <span class="o">=</span> <span class="n">misc</span><span class="o">.</span><span class="n">encode_numeric_vector</span><span class="p">(</span><span class="n">gff_chrom_starts</span><span class="p">)</span>
+    <span class="n">gff_block_sizes_string</span> <span class="o">=</span> <span class="n">misc</span><span class="o">.</span><span class="n">encode_numeric_vector</span><span class="p">(</span><span class="n">gff_block_sizes</span><span class="p">)</span>
+
+    <span class="n">orf_idx_string</span> <span class="o">=</span> <span class="n">compute_orf_val</span><span class="p">(</span><span class="n">start</span><span class="o">=</span><span class="n">gff_genomic_start</span><span class="p">,</span>
+                                     <span class="n">end</span><span class="o">=</span><span class="n">gff_genomic_end</span><span class="p">,</span>
+                                     <span class="n">strand</span><span class="o">=</span><span class="n">orf_object</span><span class="o">.</span><span class="n">strand</span><span class="p">,</span>
+                                     <span class="n">assembly_id</span><span class="o">=</span><span class="n">assembly_id</span><span class="p">,</span>
+                                     <span class="n">block_sizes</span><span class="o">=</span><span class="n">gff_block_sizes_string</span><span class="p">,</span>
+                                     <span class="n">chrom_starts</span><span class="o">=</span><span class="n">gff_chrom_starts_string</span><span class="p">,</span>
+                                     <span class="p">)</span>
+
+    <span class="n">orf_attributes</span> <span class="o">=</span> <span class="p">{</span><span class="s1">&#39;id&#39;</span><span class="p">:</span> <span class="n">orf_id</span><span class="p">,</span>
+                      <span class="s1">&#39;start&#39;</span><span class="p">:</span> <span class="n">gff_genomic_start</span><span class="p">,</span>
+                      <span class="s1">&#39;end&#39;</span><span class="p">:</span> <span class="n">gff_genomic_end</span><span class="p">,</span>
+                      <span class="s1">&#39;strand&#39;</span><span class="p">:</span> <span class="n">orf_object</span><span class="o">.</span><span class="n">strand</span><span class="p">,</span>
+                      <span class="s1">&#39;assembly_id&#39;</span><span class="p">:</span> <span class="n">assembly_id</span><span class="p">,</span>
+                      <span class="s1">&#39;block_sizes&#39;</span><span class="p">:</span> <span class="n">gff_block_sizes_string</span><span class="p">,</span>
+                      <span class="s1">&#39;chrom_starts&#39;</span><span class="p">:</span> <span class="n">gff_chrom_starts_string</span><span class="p">,</span>
+                      <span class="s1">&#39;phases&#39;</span><span class="p">:</span> <span class="n">misc</span><span class="o">.</span><span class="n">encode_numeric_vector</span><span class="p">(</span><span class="n">orf_cds_phases</span><span class="p">),</span>
+                      <span class="s1">&#39;exon_frames&#39;</span><span class="p">:</span> <span class="n">misc</span><span class="o">.</span><span class="n">encode_numeric_vector</span><span class="p">(</span><span class="n">orf_cds_frames</span><span class="p">),</span>
+                      <span class="s1">&#39;orf_idx&#39;</span><span class="p">:</span> <span class="n">compute_orf_idx</span><span class="p">(</span><span class="n">orf_idx_string</span><span class="p">),</span>
+                      <span class="s1">&#39;orf_idx_str&#39;</span><span class="p">:</span> <span class="n">orf_idx_string</span><span class="p">,</span>
+                      <span class="s1">&#39;secondary_orf_id&#39;</span><span class="p">:</span> <span class="s1">&#39;&#39;</span><span class="p">,</span>
+                      <span class="s1">&#39;benchling_id&#39;</span><span class="p">:</span> <span class="s1">&#39;&#39;</span><span class="p">,</span>
+                      <span class="s1">&#39;aa_seq&#39;</span><span class="p">:</span> <span class="n">orf_object</span><span class="o">.</span><span class="n">aa_sequence</span><span class="p">,</span>
+                      <span class="s1">&#39;nt_seq&#39;</span><span class="p">:</span> <span class="n">orf_object</span><span class="o">.</span><span class="n">nuc_sequence</span><span class="p">,</span>
+                      <span class="s1">&#39;ensembl_protein_id&#39;</span><span class="p">:</span> <span class="s1">&#39;&#39;</span><span class="p">,</span>
+                      <span class="s1">&#39;refseq_protein_id&#39;</span><span class="p">:</span> <span class="s1">&#39;&#39;</span><span class="p">,</span>
+                      <span class="s1">&#39;openprot_id&#39;</span><span class="p">:</span> <span class="s1">&#39;&#39;</span><span class="p">,</span>
+                      <span class="s1">&#39;uniprot_id&#39;</span><span class="p">:</span> <span class="s1">&#39;&#39;</span><span class="p">,</span>
+                      <span class="s1">&#39;velia_id&#39;</span><span class="p">:</span> <span class="n">velia_id_value</span><span class="p">,</span>
+                      <span class="s1">&#39;attrs&#39;</span><span class="p">:</span> <span class="p">{}</span>
+                      <span class="p">}</span>
+
+    <span class="k">if</span> <span class="n">include_table_name</span><span class="p">:</span>
+        <span class="n">orf_attributes</span> <span class="o">=</span> <span class="p">{</span><span class="s1">&#39;orf.&#39;</span> <span class="o">+</span> <span class="n">k</span><span class="p">:</span> <span class="n">v</span> <span class="k">for</span> <span class="n">k</span><span class="p">,</span> <span class="n">v</span> <span class="ow">in</span> <span class="n">orf_attributes</span><span class="o">.</span><span class="n">items</span><span class="p">()}</span>
+
+    <span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="s1">&#39;Annotated ORF attributes: </span><span class="si">%s</span><span class="s1">&#39;</span><span class="p">,</span> <span class="n">orf_attributes</span><span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">orf_attributes</span><span class="p">,</span> <span class="n">exon_indices</span><span class="p">,</span> <span class="n">orf_cds_phases</span><span class="p">,</span> <span class="n">orf_cds_frames</span></div>
+
+
+
+<div class="viewcode-block" id="validate_orf">
+<a class="viewcode-back" href="../../../modules/bigprot.html#orfdb.bigprot.annotation.validate_orf">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">validate_orf</span><span class="p">(</span><span class="n">orf_object</span><span class="p">:</span> <span class="n">orf_classes</span><span class="o">.</span><span class="n">OrfBase</span><span class="p">,</span> <span class="n">parent_transcript</span><span class="p">:</span> <span class="nb">dict</span><span class="p">,</span> <span class="n">genome</span><span class="p">:</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">],</span> <span class="n">accession_namespace</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Validate ORF.</span>
+<span class="sd">    This function validates the ORF by comparing the internal ORF sequence with the extracted ORF sequence from the genome.</span>
+<span class="sd">    Args:</span>
+<span class="sd">        orf_object: The ORF object to validate.</span>
+<span class="sd">        parent_transcript: The parent transcript of the ORF.</span>
+<span class="sd">        genome: The genome from which the ORF is extracted.</span>
+<span class="sd">        accession_namespace: The accession namespace for the genome sequences.</span>
+
+<span class="sd">    Raises:</span>
+<span class="sd">        AssertionError: If the internal ORF sequence does not match the extracted ORF sequence.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">internal_orf_sequence</span> <span class="o">=</span> <span class="n">orf_object</span><span class="o">.</span><span class="n">nuc_sequence</span>
+
+    <span class="n">orf_attributes</span><span class="p">,</span> <span class="n">exon_indices</span><span class="p">,</span> <span class="n">orf_cds_phases</span><span class="p">,</span> <span class="n">orf_cds_frames</span> <span class="o">=</span> <span class="n">populate_velia_db_fields_orf</span><span class="p">(</span>
+        <span class="n">orf_object</span><span class="p">,</span> <span class="n">parent_transcript</span><span class="p">,</span> <span class="n">include_table_name</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="k">assert</span> <span class="nb">len</span><span class="p">(</span><span class="n">exon_indices</span><span class="p">)</span> <span class="o">==</span> <span class="nb">len</span><span class="p">(</span><span class="n">orf_cds_phases</span><span class="p">)</span> <span class="o">==</span> <span class="nb">len</span><span class="p">(</span><span class="n">orf_cds_frames</span><span class="p">),</span> <span class="sa">f</span><span class="s1">&#39;ORF </span><span class="si">{</span><span class="n">orf_object</span><span class="si">}</span><span class="s1">: length of exon indices </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">exon_indices</span><span class="p">)</span><span class="si">}</span><span class="s1"> does not equal length of CDS phases </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">orf_cds_phases</span><span class="p">)</span><span class="si">}</span><span class="s1"> or length of CDS frames </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">orf_cds_frames</span><span class="p">)</span><span class="si">}</span><span class="s1">!&#39;</span>
+    
+    <span class="n">orf_attributes</span><span class="o">.</span><span class="n">update</span><span class="p">(</span><span class="n">parent_transcript</span><span class="p">)</span>
+
+    <span class="n">extracted_orf_sequence</span> <span class="o">=</span> <span class="n">sequence_tools</span><span class="o">.</span><span class="n">extract_orf_sequence_from_genome</span><span class="p">(</span>
+        <span class="n">orf_attributes</span><span class="p">,</span> <span class="n">genome</span><span class="p">,</span> <span class="n">source_coordinate_system</span><span class="o">=</span><span class="s1">&#39;gff&#39;</span><span class="p">,</span> <span class="n">accession_namespace</span><span class="o">=</span><span class="n">accession_namespace</span><span class="p">)</span>
+
+    <span class="k">assert</span> <span class="nb">len</span><span class="p">(</span>
+        <span class="n">extracted_orf_sequence</span><span class="p">)</span> <span class="o">%</span> <span class="mi">3</span> <span class="o">==</span> <span class="mi">0</span><span class="p">,</span> <span class="sa">f</span><span class="s1">&#39;ORF </span><span class="si">{</span><span class="n">orf_object</span><span class="si">}</span><span class="s1">: length </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">extracted_orf_sequence</span><span class="p">)</span><span class="si">}</span><span class="s1"> of extracted ORF sequence is not divisible by 3!&#39;</span>
+    <span class="k">assert</span> <span class="nb">len</span><span class="p">(</span>
+        <span class="n">internal_orf_sequence</span><span class="p">)</span> <span class="o">%</span> <span class="mi">3</span> <span class="o">==</span> <span class="mi">0</span><span class="p">,</span> <span class="sa">f</span><span class="s1">&#39;ORF </span><span class="si">{</span><span class="n">orf_object</span><span class="si">}</span><span class="s1">: length </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">internal_orf_sequence</span><span class="p">)</span><span class="si">}</span><span class="s1"> of internal ORF sequence is not divisible by 3!&#39;</span>
+    <span class="k">assert</span> <span class="nb">len</span><span class="p">(</span><span class="n">internal_orf_sequence</span><span class="p">)</span> <span class="o">==</span> <span class="nb">len</span><span class="p">(</span>
+        <span class="n">extracted_orf_sequence</span><span class="p">),</span> <span class="sa">f</span><span class="s1">&#39;ORF </span><span class="si">{</span><span class="n">orf_object</span><span class="si">}</span><span class="s1">: length </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">internal_orf_sequence</span><span class="p">)</span><span class="si">}</span><span class="s1"> of internal ORF sequence not equal to </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">extracted_orf_sequence</span><span class="p">)</span><span class="si">}</span><span class="s1"> of extracted ORF sequence!&#39;</span>
+    <span class="k">assert</span> <span class="n">internal_orf_sequence</span><span class="o">.</span><span class="n">upper</span><span class="p">()</span> <span class="o">==</span> <span class="n">extracted_orf_sequence</span><span class="o">.</span><span class="n">upper</span><span class="p">(</span>
+    <span class="p">),</span> <span class="sa">f</span><span class="s1">&#39;ORF </span><span class="si">{</span><span class="n">orf_object</span><span class="si">}</span><span class="s1">: internal ORF sequence </span><span class="si">{</span><span class="n">internal_orf_sequence</span><span class="si">}</span><span class="s1"> not equal to extracted ORF sequence </span><span class="si">{</span><span class="n">extracted_orf_sequence</span><span class="si">}</span><span class="s1">!&#39;</span></div>
+
+
+
+<div class="viewcode-block" id="generate_cds_orf_info">
+<a class="viewcode-back" href="../../../modules/bigprot.html#orfdb.bigprot.annotation.generate_cds_orf_info">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">generate_cds_orf_info</span><span class="p">(</span><span class="n">orf_attributes</span><span class="p">:</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">],</span>
+                          <span class="n">parent_transcript</span><span class="p">:</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">],</span>
+                          <span class="n">exon_indices</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="nb">int</span><span class="p">],</span>
+                          <span class="n">cds_phases</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="nb">int</span><span class="p">],</span>
+                          <span class="n">cds_frames</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="nb">int</span><span class="p">],</span>
+                          <span class="n">exons_by_transcript</span><span class="p">:</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="n">List</span><span class="p">[</span><span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]]]],</span>
+                          <span class="n">cdss_by_exon</span><span class="p">:</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">List</span><span class="p">[</span><span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]]],</span>
+                          <span class="n">cds_orf_linkages</span><span class="p">:</span> <span class="n">Set</span><span class="p">[</span><span class="n">Tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">]])</span> <span class="o">-&gt;</span> <span class="n">List</span><span class="p">[</span><span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Generates CDS ORF information for a given ORF.</span>
+
+<span class="sd">    This function iterates through exon indices, frames, and phases to generate rows of CDS ORF information. It logs warnings for exons with multiple definitions or no associated CDS entries.</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        orf_attributes: A dictionary containing attributes of the ORF.</span>
+<span class="sd">        parent_transcript: A dictionary containing attributes of the parent transcript of the ORF.</span>
+<span class="sd">        exon_indices: A list of exon indices relevant to the ORF.</span>
+<span class="sd">        cds_phases: A list of phases for each CDS in the ORF.</span>
+<span class="sd">        cds_frames: A list of reading frames for each CDS in the ORF.</span>
+<span class="sd">        exons_by_transcript: A dictionary mapping transcript IDs to their exons.</span>
+<span class="sd">        cdss_by_exon: A dictionary mapping exon IDs to their CDSs.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        A list of dictionaries, each representing a row of CDS ORF information to be inserted into a database or further processed.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="s1">&#39;Generating cds_orf entries for ORF </span><span class="si">%s</span><span class="s1"> in relation to transcript </span><span class="si">%s</span><span class="s1">&#39;</span><span class="p">,</span>
+                 <span class="n">orf_attributes</span><span class="p">[</span><span class="s1">&#39;orf.orf_idx_str&#39;</span><span class="p">],</span> <span class="n">parent_transcript</span><span class="p">[</span><span class="s1">&#39;transcript.id&#39;</span><span class="p">])</span>
+    <span class="n">transcript_exons</span> <span class="o">=</span> <span class="n">exons_by_transcript</span><span class="p">[</span><span class="n">parent_transcript</span><span class="p">[</span><span class="s1">&#39;transcript.id&#39;</span><span class="p">]]</span>
+
+    <span class="n">cds_phases</span> <span class="o">=</span> <span class="n">misc</span><span class="o">.</span><span class="n">extract_numeric_vector</span><span class="p">(</span><span class="n">orf_attributes</span><span class="p">[</span><span class="s1">&#39;orf.phases&#39;</span><span class="p">])</span>
+
+    <span class="n">cds_orf_rows</span> <span class="o">=</span> <span class="p">[]</span>
+
+    <span class="k">for</span> <span class="n">exon_idx</span><span class="p">,</span> <span class="n">cds_phase</span><span class="p">,</span> <span class="n">cds_frame</span> <span class="ow">in</span> <span class="nb">zip</span><span class="p">(</span><span class="n">exon_indices</span><span class="p">,</span> <span class="n">cds_phases</span><span class="p">,</span> <span class="n">cds_frames</span><span class="p">):</span>
+        <span class="n">these_exons</span> <span class="o">=</span> <span class="n">transcript_exons</span><span class="p">[</span><span class="n">exon_idx</span> <span class="o">+</span> <span class="mi">1</span><span class="p">]</span>
+        <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">these_exons</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mi">1</span><span class="p">:</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="s1">&#39;Exon </span><span class="si">%s</span><span class="s1"> in transcript </span><span class="si">%s</span><span class="s1"> has multiple definitions!&#39;</span><span class="p">,</span>
+                         <span class="n">exon_idx</span><span class="p">,</span> <span class="n">parent_transcript</span><span class="p">[</span><span class="s1">&#39;transcript.id&#39;</span><span class="p">])</span>
+        <span class="k">for</span> <span class="n">this_exon</span> <span class="ow">in</span> <span class="n">these_exons</span><span class="p">:</span>
+            <span class="k">if</span> <span class="n">this_exon</span><span class="p">[</span><span class="s1">&#39;exon.id&#39;</span><span class="p">]</span> <span class="ow">in</span> <span class="n">cdss_by_exon</span><span class="p">:</span>
+                <span class="k">for</span> <span class="n">this_cds</span> <span class="ow">in</span> <span class="n">cdss_by_exon</span><span class="p">[</span><span class="n">this_exon</span><span class="p">[</span><span class="s1">&#39;exon.id&#39;</span><span class="p">]]:</span>
+                    <span class="k">if</span> <span class="p">(</span><span class="n">this_cds</span><span class="p">[</span><span class="s1">&#39;cds.id&#39;</span><span class="p">],</span> <span class="n">orf_attributes</span><span class="p">[</span><span class="s1">&#39;orf.id&#39;</span><span class="p">])</span> <span class="ow">in</span> <span class="n">cds_orf_linkages</span><span class="p">:</span> <span class="c1"># This CDS-ORF linkage already exists, so we skip</span>
+                        <span class="k">continue</span>
+
+                    <span class="n">this_cds_orf_row</span> <span class="o">=</span> <span class="p">{</span><span class="s1">&#39;cds_orf.cds_id&#39;</span><span class="p">:</span> <span class="n">this_cds</span><span class="p">[</span><span class="s1">&#39;cds.id&#39;</span><span class="p">],</span> <span class="s1">&#39;cds_orf.orf_id&#39;</span><span class="p">:</span> <span class="n">orf_attributes</span><span class="p">[</span><span class="s1">&#39;orf.id&#39;</span><span class="p">],</span>
+                                        <span class="s1">&#39;cds_orf.orf_idx_str&#39;</span><span class="p">:</span> <span class="n">orf_attributes</span><span class="p">[</span><span class="s1">&#39;orf.orf_idx_str&#39;</span><span class="p">],</span>
+                                        <span class="s1">&#39;cds_orf.cds_number&#39;</span><span class="p">:</span> <span class="n">exon_idx</span><span class="p">,</span> 
+                                        <span class="s1">&#39;cds_orf.phase&#39;</span><span class="p">:</span> <span class="n">cds_phase</span><span class="p">,</span> 
+                                        <span class="s1">&#39;cds_orf.reading_frame&#39;</span><span class="p">:</span> <span class="n">cds_frame</span><span class="p">,</span>
+                                        <span class="s1">&#39;cds_orf.attrs&#39;</span><span class="p">:</span> <span class="p">{}}</span>
+
+                    <span class="n">cds_orf_linkages</span><span class="o">.</span><span class="n">add</span><span class="p">((</span><span class="n">this_cds</span><span class="p">[</span><span class="s1">&#39;cds.id&#39;</span><span class="p">],</span> <span class="n">orf_attributes</span><span class="p">[</span><span class="s1">&#39;orf.id&#39;</span><span class="p">]))</span> <span class="c1"># Add this CDS-ORF linkage to the set of linkages</span>
+                    <span class="n">cds_orf_rows</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">this_cds_orf_row</span><span class="p">)</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span>
+                    <span class="s1">&#39;Exon </span><span class="si">%s</span><span class="s1"> has no associated CDS entries!&#39;</span><span class="p">,</span> <span class="n">this_exon</span><span class="p">[</span><span class="s1">&#39;exon.id&#39;</span><span class="p">])</span>
+
+    <span class="k">return</span> <span class="n">cds_orf_rows</span></div>
+
+
+
+<div class="viewcode-block" id="annotate_orfs">
+<a class="viewcode-back" href="../../../modules/bigprot.html#orfdb.bigprot.annotation.annotate_orfs">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">annotate_orfs</span><span class="p">(</span><span class="n">current_orf_id</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+                  <span class="n">transcript_orfs</span><span class="p">:</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Set</span><span class="p">[</span><span class="n">orf_classes</span><span class="o">.</span><span class="n">OrfBase</span><span class="p">]],</span>
+                  <span class="n">transcripts_by_id</span><span class="p">:</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Union</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">int</span><span class="p">,</span> <span class="nb">float</span><span class="p">]]],</span>
+                  <span class="n">transcript_seq_strands_by_id</span><span class="p">:</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">]],</span>
+                  <span class="n">orf_ids_by_idx_str</span><span class="p">:</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">],</span>
+                  <span class="n">genome</span><span class="p">:</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">],</span>
+                  <span class="n">exons_by_transcript</span><span class="p">:</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="n">List</span><span class="p">[</span><span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Union</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">int</span><span class="p">,</span> <span class="nb">float</span><span class="p">]]]]],</span>
+                  <span class="n">cdss_by_exon</span><span class="p">:</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">List</span><span class="p">[</span><span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Union</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">int</span><span class="p">,</span> <span class="nb">float</span><span class="p">]]]],</span>
+                  <span class="n">cds_orf_linkages</span><span class="p">:</span> <span class="n">Set</span><span class="p">[</span><span class="n">Tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">]],</span>
+                  <span class="n">kozak_upstream_pssm</span><span class="p">:</span> <span class="n">Bio</span><span class="o">.</span><span class="n">motifs</span><span class="o">.</span><span class="n">matrix</span><span class="o">.</span><span class="n">PositionSpecificScoringMatrix</span><span class="p">,</span>
+                  <span class="n">kozak_downstream_pssm</span><span class="p">:</span> <span class="n">Bio</span><span class="o">.</span><span class="n">motifs</span><span class="o">.</span><span class="n">matrix</span><span class="o">.</span><span class="n">PositionSpecificScoringMatrix</span><span class="p">,</span>
+                  <span class="n">phase_style</span><span class="o">=</span><span class="n">constants</span><span class="o">.</span><span class="n">DEFAULT_PHASE_STYLE</span><span class="p">,</span>
+                  <span class="n">accession_namespace</span><span class="o">=</span><span class="n">constants</span><span class="o">.</span><span class="n">DEFAULT_ACCESSION_NAMESPACE</span><span class="p">,</span>
+                  <span class="n">skip_annotation</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+                  <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Tuple</span><span class="p">[</span>
+    <span class="nb">int</span><span class="p">,</span> <span class="n">List</span><span class="p">[</span><span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Union</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">int</span><span class="p">,</span> <span class="nb">float</span><span class="p">]]],</span> <span class="n">List</span><span class="p">[</span><span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Union</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">int</span><span class="p">,</span> <span class="nb">float</span><span class="p">]]],</span> <span class="n">List</span><span class="p">[</span>
+        <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Union</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">int</span><span class="p">,</span> <span class="nb">float</span><span class="p">]]],</span> <span class="n">List</span><span class="p">[</span><span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Union</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">int</span><span class="p">,</span> <span class="nb">float</span><span class="p">]]]]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    This function annotates Open Reading Frames (ORFs) in a single-threaded manner and returns comprehensive ORF-related data. It provides detailed ORF annotations, including basic ORF information, supplemental details, transcript-specific ORF data, and CDS-specific ORF data, alongside an incremented ORF ID.</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        current_orf_id (int): The identifier for the ORF currently being annotated.</span>
+<span class="sd">        transcript_orfs (Dict[str, Set[orf_classes.OrfBase]]): Maps transcript identifiers to sets of ORF objects.</span>
+<span class="sd">        transcripts_by_id (Dict[str, Dict[str, Union[str, int, float]]]): Maps transcript identifiers to their associated metadata, which may include a mix of strings, integers, and floats.</span>
+<span class="sd">        transcript_seq_strands_by_id (Dict[str, Tuple[str, str]]): Maps transcript identifiers to tuples containing sequence data and strand orientation.</span>
+<span class="sd">        genome (Dict[str, str]): A dictionary containing genome sequences indexed by their identifiers.</span>
+<span class="sd">        exons_by_transcript (Dict[str, Dict[int, List[Dict[str, Union[str, int, float]]]]]): Maps transcript identifiers to their corresponding exons, which are represented as dictionaries of mixed data types.</span>
+<span class="sd">        cdss_by_exon (Dict[str, List[Dict[str, Union[str, int, float]]]]): Maps exon identifiers to their corresponding CDS entries, represented as dictionaries of mixed data types.</span>
+<span class="sd">        kozak_upstream_pssm (Bio.motifs.matrix.PositionSpecificScoringMatrix): A scoring matrix for analyzing the upstream region of the Kozak sequence for translation initiation.</span>
+<span class="sd">        kozak_downstream_pssm (Bio.motifs.matrix.PositionSpecificScoringMatrix): A scoring matrix for analyzing the downstream region of the Kozak sequence for translation initiation.</span>
+<span class="sd">        accession_namespace (str): The accession namespace for the genome sequences.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        Tuple[int, List[Dict[str, Union[str, int, float]]], List[Dict[str, Union[str, int, float]]], List[Dict[str, Union[str, int, float]]], List[Dict[str, Union[str, int, float]]]]: A tuple containing the updated ORF ID and four lists of dictionaries. Each list contains dictionaries with information about ORFs, supplemental ORFs, transcript ORFs, and CDS ORFs, respectively, featuring a mix of strings, integers, and floats.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s1">&#39;Annotating </span><span class="si">%s</span><span class="s1"> ORFs using a single process ...&#39;</span><span class="p">,</span>
+                <span class="nb">sum</span><span class="p">((</span><span class="nb">len</span><span class="p">(</span><span class="n">orfs</span><span class="p">)</span> <span class="k">for</span> <span class="n">orfs</span> <span class="ow">in</span> <span class="n">transcript_orfs</span><span class="o">.</span><span class="n">values</span><span class="p">())))</span>
+
+    <span class="n">orf_table_chunk</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="n">supplemental_orf_table_chunk</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="n">transcript_orf_table_chunk</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="n">cds_orf_table_chunk</span> <span class="o">=</span> <span class="p">[]</span>
+
+    <span class="k">for</span> <span class="n">transcript_id</span><span class="p">,</span> <span class="n">orf_set</span> <span class="ow">in</span> <span class="n">transcript_orfs</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+        <span class="k">for</span> <span class="n">orf_object</span> <span class="ow">in</span> <span class="n">orf_set</span><span class="p">:</span>
+            <span class="n">parent_transcript</span> <span class="o">=</span> <span class="n">transcripts_by_id</span><span class="p">[</span><span class="n">transcript_id</span><span class="p">]</span>
+            <span class="n">parent_transcript_seq</span> <span class="o">=</span> <span class="n">transcript_seq_strands_by_id</span><span class="p">[</span><span class="n">transcript_id</span><span class="p">][</span><span class="mi">0</span><span class="p">]</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="s1">&#39;Annotating </span><span class="si">%s</span><span class="s1"> ...&#39;</span><span class="p">,</span> <span class="n">orf_object</span><span class="p">)</span>
+
+            <span class="n">validate_orf</span><span class="p">(</span><span class="n">orf_object</span><span class="o">=</span><span class="n">orf_object</span><span class="p">,</span>
+                         <span class="n">parent_transcript</span><span class="o">=</span><span class="n">parent_transcript</span><span class="p">,</span>
+                         <span class="n">genome</span><span class="o">=</span><span class="n">genome</span><span class="p">,</span>
+                         <span class="n">accession_namespace</span><span class="o">=</span><span class="n">accession_namespace</span><span class="p">)</span>
+
+            <span class="n">orf_row</span><span class="p">,</span> <span class="n">exon_indices</span><span class="p">,</span> <span class="n">cds_phases</span><span class="p">,</span> <span class="n">cds_frames</span> <span class="o">=</span> <span class="n">populate_velia_db_fields_orf</span><span class="p">(</span><span class="n">orf_object</span><span class="p">,</span> <span class="n">parent_transcript</span><span class="p">,</span>
+                                                                              <span class="nb">str</span><span class="p">(</span><span class="n">current_orf_id</span><span class="p">),</span>
+                                                                              <span class="n">include_table_name</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+                                                                              <span class="n">phase_style</span><span class="o">=</span><span class="n">phase_style</span><span class="p">)</span>
+
+            <span class="c1"># Logic: We will often find the same ORF on multiple overlapping transcripts. These need to have a single</span>
+            <span class="c1"># entry in the ORF table but multiple entries in the transcript_orf and cds_orf tables corresponding </span>
+            <span class="c1"># to the multiple transcripts / CDS sets on which the ORF is found.</span>
+            <span class="c1"># So, the first ORF to have a given index string (which are identical for identical ORF coordinates)</span>
+            <span class="c1"># will be assigned an ORF table entry and corresponding ORF ID number. This mapping between index strings</span>
+            <span class="c1"># and ORF IDs is stored in orf_ids_by_idx_str. Subsequent ORFs with the same index</span>
+            <span class="c1"># string will look up the ORF ID from orf_ids_by_idx_str and use that ORF ID for constructing the </span>
+            <span class="c1"># transcript_orf and cds_orf table entries.</span>
+            <span class="k">if</span> <span class="n">orf_row</span><span class="p">[</span><span class="s1">&#39;orf.orf_idx_str&#39;</span><span class="p">]</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">orf_ids_by_idx_str</span><span class="p">:</span>
+                <span class="n">orf_ids_by_idx_str</span><span class="p">[</span><span class="n">orf_row</span><span class="p">[</span><span class="s1">&#39;orf.orf_idx_str&#39;</span><span class="p">]</span>
+                                   <span class="p">]</span> <span class="o">=</span> <span class="n">orf_row</span><span class="p">[</span><span class="s1">&#39;orf.id&#39;</span><span class="p">]</span>
+                <span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="s1">&#39;ORF </span><span class="si">%s</span><span class="s1"> is the first at these coordinates. Assigned orf_id </span><span class="si">%s</span><span class="s1"> and adding to orf and supplemental_orf tables.&#39;</span><span class="p">,</span> <span class="n">orf_row</span><span class="p">,</span> <span class="n">orf_row</span><span class="p">[</span><span class="s1">&#39;orf.id&#39;</span><span class="p">])</span>
+                <span class="n">orf_table_chunk</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">orf_row</span><span class="p">)</span>
+
+                <span class="k">if</span> <span class="ow">not</span> <span class="n">skip_annotation</span><span class="p">:</span>
+                    <span class="n">supplemental_orf_row</span> <span class="o">=</span> <span class="p">{</span><span class="s1">&#39;orf.id&#39;</span><span class="p">:</span> <span class="n">current_orf_id</span><span class="p">,</span>
+                                            <span class="s1">&#39;orf.orf_idx_str&#39;</span><span class="p">:</span> <span class="n">orf_row</span><span class="p">[</span><span class="s1">&#39;orf.orf_idx_str&#39;</span><span class="p">],</span>
+                                            <span class="s1">&#39;start_codon&#39;</span><span class="p">:</span> <span class="n">orf_object</span><span class="o">.</span><span class="n">start_codon</span><span class="p">,</span>
+                                            <span class="s1">&#39;stop_codon&#39;</span><span class="p">:</span> <span class="n">orf_object</span><span class="o">.</span><span class="n">stop_codon</span><span class="p">,</span>
+                                            <span class="s1">&#39;codon_length&#39;</span><span class="p">:</span> <span class="n">orf_object</span><span class="o">.</span><span class="n">codon_length</span><span class="p">,</span>
+                                            <span class="s1">&#39;nuc_length&#39;</span><span class="p">:</span> <span class="n">orf_object</span><span class="o">.</span><span class="n">nuc_length</span><span class="p">,</span>
+                                            <span class="s1">&#39;start_offset_from_transcript&#39;</span><span class="p">:</span> <span class="n">orf_object</span><span class="o">.</span><span class="n">start_pos</span><span class="p">,</span>
+                                            <span class="p">}</span>
+
+                    <span class="n">supplemental_orf_row</span><span class="p">[</span><span class="s1">&#39;kozak_score&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="n">motif_tools</span><span class="o">.</span><span class="n">compute_kozak_score</span><span class="p">(</span>
+                        <span class="n">orf_object</span><span class="o">=</span><span class="n">orf_object</span><span class="p">,</span> <span class="n">parent_transcript_seq</span><span class="o">=</span><span class="n">parent_transcript_seq</span><span class="p">,</span>
+                        <span class="n">kozak_upstream_pssm</span><span class="o">=</span><span class="n">kozak_upstream_pssm</span><span class="p">,</span>
+                        <span class="n">kozak_downstream_pssm</span><span class="o">=</span><span class="n">kozak_downstream_pssm</span><span class="p">)</span>
+
+                <span class="n">current_orf_id</span> <span class="o">+=</span> <span class="mi">1</span>
+
+            <span class="k">else</span><span class="p">:</span> <span class="c1"># This ORF is a duplicate, so we just need to add the transcript_orf and cds_orf entries</span>
+                <span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="s1">&#39;ORF </span><span class="si">%s</span><span class="s1"> has already beenn called at these coordinates. Assigned existing orf_id </span><span class="si">%s</span><span class="s1">. Will only add to transcript_orf and cds_orf tables.&#39;</span><span class="p">,</span> <span class="n">orf_row</span><span class="p">,</span> <span class="n">orf_ids_by_idx_str</span><span class="p">[</span><span class="n">orf_row</span><span class="p">[</span><span class="s1">&#39;orf.orf_idx_str&#39;</span><span class="p">]])</span>
+
+                <span class="n">orf_row</span><span class="p">[</span><span class="s1">&#39;orf.orf_id&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="n">orf_ids_by_idx_str</span><span class="p">[</span><span class="n">orf_row</span><span class="p">[</span><span class="s1">&#39;orf.orf_idx_str&#39;</span><span class="p">]]</span>
+
+            <span class="k">if</span> <span class="n">cdss_by_exon</span> <span class="ow">and</span> <span class="n">exons_by_transcript</span><span class="p">:</span>
+                <span class="n">cds_orf_rows</span> <span class="o">=</span> <span class="n">generate_cds_orf_info</span><span class="p">(</span><span class="n">orf_attributes</span><span class="o">=</span><span class="n">orf_row</span><span class="p">,</span>
+                                                        <span class="n">parent_transcript</span><span class="o">=</span><span class="n">parent_transcript</span><span class="p">,</span>
+                                                        <span class="n">exon_indices</span><span class="o">=</span><span class="n">exon_indices</span><span class="p">,</span>
+                                                        <span class="n">cds_phases</span><span class="o">=</span><span class="n">cds_phases</span><span class="p">,</span>
+                                                        <span class="n">cds_frames</span><span class="o">=</span><span class="n">cds_frames</span><span class="p">,</span>
+                                                        <span class="n">exons_by_transcript</span><span class="o">=</span><span class="n">exons_by_transcript</span><span class="p">,</span>
+                                                        <span class="n">cdss_by_exon</span><span class="o">=</span><span class="n">cdss_by_exon</span><span class="p">,</span>
+                                                        <span class="n">cds_orf_linkages</span><span class="o">=</span><span class="n">cds_orf_linkages</span><span class="p">)</span>
+                <span class="n">cds_orf_table_chunk</span><span class="o">.</span><span class="n">extend</span><span class="p">(</span><span class="n">cds_orf_rows</span><span class="p">)</span>               
+
+            <span class="n">transcript_orf_row</span> <span class="o">=</span> <span class="p">{</span><span class="s1">&#39;transcript_orf.transcript_id&#39;</span><span class="p">:</span> <span class="n">parent_transcript</span><span class="p">[</span><span class="s1">&#39;transcript.id&#39;</span><span class="p">],</span>
+                                  <span class="s1">&#39;transcript_orf.orf_id&#39;</span><span class="p">:</span> <span class="n">orf_ids_by_idx_str</span><span class="p">[</span><span class="n">orf_row</span><span class="p">[</span><span class="s1">&#39;orf.orf_idx_str&#39;</span><span class="p">]],</span>
+                                  <span class="s1">&#39;transcript_orf.orf_idx_str&#39;</span><span class="p">:</span> <span class="n">orf_row</span><span class="p">[</span><span class="s1">&#39;orf.orf_idx_str&#39;</span><span class="p">],</span>
+                                  <span class="s1">&#39;transcript_orf.evidence_tag&#39;</span><span class="p">:</span> <span class="s1">&#39;big_prot&#39;</span><span class="p">,</span>
+                                  <span class="s1">&#39;transcript_orf.attrs&#39;</span><span class="p">:</span> <span class="p">{}</span>
+                                  <span class="p">}</span>
+            <span class="n">transcript_orf_table_chunk</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">transcript_orf_row</span><span class="p">)</span>
+
+    <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s1">&#39;</span><span class="si">%s</span><span class="s1"> unique ORFs found in this chunk, </span><span class="si">%s</span><span class="s1"> total so far.&#39;</span><span class="p">,</span>
+                <span class="nb">len</span><span class="p">(</span><span class="n">orf_table_chunk</span><span class="p">),</span> <span class="nb">len</span><span class="p">(</span><span class="n">orf_ids_by_idx_str</span><span class="p">))</span>
+
+    <span class="k">return</span> <span class="n">current_orf_id</span><span class="p">,</span> <span class="n">orf_table_chunk</span><span class="p">,</span> <span class="n">supplemental_orf_table_chunk</span><span class="p">,</span> <span class="n">transcript_orf_table_chunk</span><span class="p">,</span> <span class="n">cds_orf_table_chunk</span></div>
+
+
+
+<div class="viewcode-block" id="convert_orf_row_to_object">
+<a class="viewcode-back" href="../../../modules/bigprot.html#orfdb.bigprot.annotation.convert_orf_row_to_object">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">convert_orf_row_to_object</span><span class="p">(</span><span class="n">orf_row_dict</span><span class="p">:</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">],</span> <span class="n">parent_transcript</span><span class="p">:</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">],</span> <span class="n">genome</span><span class="p">:</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="n">orf_classes</span><span class="o">.</span><span class="n">OrfBase</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Converts ORF row dictionary to ORF object.</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        orf_row_dict: The ORF row dictionary.</span>
+<span class="sd">        parent_transcript: The parent transcript dictionary.</span>
+<span class="sd">        genome: The genome dictionary.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        The ORF object.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="s1">&#39;Converting ORF </span><span class="si">%s</span><span class="s1"> to object ...&#39;</span><span class="p">,</span>
+                 <span class="n">orf_row_dict</span><span class="p">[</span><span class="s1">&#39;orf.orf_idx_str&#39;</span><span class="p">])</span>
+
+    <span class="n">orf_relative_start</span> <span class="o">=</span> <span class="n">coordinates</span><span class="o">.</span><span class="n">compute_orf_relative_start</span><span class="p">(</span>
+        <span class="n">orf_row_dict</span><span class="p">[</span><span class="s1">&#39;orf.start&#39;</span><span class="p">],</span> <span class="n">parent_transcript</span><span class="p">)</span>
+    <span class="n">orf_sequence</span> <span class="o">=</span> <span class="n">sequence_tools</span><span class="o">.</span><span class="n">extract_orf_sequence_from_genome</span><span class="p">(</span>
+        <span class="n">orf_row_dict</span><span class="p">,</span> <span class="n">genome</span><span class="p">)</span><span class="o">.</span><span class="n">upper</span><span class="p">()</span>
+    <span class="k">assert</span> <span class="nb">len</span><span class="p">(</span><span class="n">orf_sequence</span><span class="p">)</span> <span class="o">%</span> <span class="mi">3</span> <span class="o">==</span> <span class="mi">0</span><span class="p">,</span> <span class="s1">&#39;NT sequence for orf </span><span class="si">%s</span><span class="s1"> has length </span><span class="si">%s</span><span class="s1"> which is not evenly divisible by 3!&#39;</span> <span class="o">%</span> <span class="p">(</span>
+        <span class="n">orf_row_dict</span><span class="p">[</span><span class="s1">&#39;orf_idx_str&#39;</span><span class="p">],</span> <span class="nb">len</span><span class="p">(</span><span class="n">orf_sequence</span><span class="p">))</span>
+    <span class="n">new_orf_object</span> <span class="o">=</span> <span class="n">orf_classes</span><span class="o">.</span><span class="n">OrfBase</span><span class="p">(</span><span class="n">parent_transcript</span><span class="p">[</span><span class="s1">&#39;transcript.id&#39;</span><span class="p">],</span>
+                                         <span class="n">start_pos</span><span class="o">=</span><span class="n">orf_relative_start</span><span class="p">,</span>
+                                         <span class="n">strand</span><span class="o">=</span><span class="n">orf_row_dict</span><span class="p">[</span><span class="s1">&#39;orf.strand&#39;</span><span class="p">],</span>
+                                         <span class="n">codons</span><span class="o">=</span><span class="n">sequence_tools</span><span class="o">.</span><span class="n">split_sequence_into_codons</span><span class="p">(</span>
+                                             <span class="n">orf_sequence</span><span class="p">)</span>
+                                         <span class="p">)</span>
+    <span class="k">return</span> <span class="n">new_orf_object</span></div>
+
+</pre></div>
+
+           </div>
+          </div>
+          <footer>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright 2024, orfdb developers.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>

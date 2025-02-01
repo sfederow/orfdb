@@ -1,0 +1,539 @@
+
+
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" data-content_root="../../../">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>orfdb.bigprot.sequence_tools &mdash; orfdb 1.0 documentation</title>
+      <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css?v=b86133f3" />
+      <link rel="stylesheet" type="text/css" href="../../../_static/css/theme.css?v=e59714d7" />
+
+  
+      <script src="../../../_static/jquery.js?v=5d32c60e"></script>
+      <script src="../../../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+      <script src="../../../_static/documentation_options.js?v=f2a433a1"></script>
+      <script src="../../../_static/doctools.js?v=9a2dae69"></script>
+      <script src="../../../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script src="../../../_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="../../../genindex.html" />
+    <link rel="search" title="Search" href="../../../search.html" /> 
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="../../../index.html" class="icon icon-home">
+            orfdb
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="../../../search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">Contents:</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../modules/base.html">Base Module</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../modules/load_db.html">Database Loading Module</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../modules/annotation_loading.html">Annotation Loading Module</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../modules/settings.html">Settings Module</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../modules/util.html">Utilities Module</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../modules/bigprot.html">BigProt Module</a></li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../../../index.html">orfdb</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="../../../index.html" class="icon icon-home" aria-label="Home"></a></li>
+          <li class="breadcrumb-item"><a href="../../index.html">Module code</a></li>
+      <li class="breadcrumb-item active">orfdb.bigprot.sequence_tools</li>
+      <li class="wy-breadcrumbs-aside">
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <h1>Source code for orfdb.bigprot.sequence_tools</h1><div class="highlight"><pre>
+<span></span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">This module provides tools for sequence analysis and manipulation. It includes functions for computing GC content, </span>
+<span class="sd">nucleotide probabilities, codon counts and frequencies, extracting sequence blocks, and more.</span>
+<span class="sd">&quot;&quot;&quot;</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">collections</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">logging</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">typing</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Dict</span><span class="p">,</span> <span class="n">List</span><span class="p">,</span> <span class="n">Optional</span><span class="p">,</span> <span class="n">Set</span><span class="p">,</span> <span class="n">Union</span><span class="p">,</span> <span class="n">Any</span><span class="p">,</span> <span class="n">Tuple</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">Bio</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">Bio.Seq</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">Bio.SeqIO</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">orfdb.bigprot</span><span class="w"> </span><span class="kn">import</span> <span class="n">misc</span><span class="p">,</span> <span class="n">coordinates</span><span class="p">,</span> <span class="n">validation</span><span class="p">,</span> <span class="n">orf_classes</span><span class="p">,</span> <span class="n">constants</span>
+
+<span class="n">logger</span> <span class="o">=</span> <span class="n">logging</span><span class="o">.</span><span class="n">getLogger</span><span class="p">(</span><span class="vm">__name__</span><span class="p">)</span>
+
+
+<span class="n">UNIFORM_NUC_PROBS</span> <span class="o">=</span> <span class="p">{</span><span class="s1">&#39;A&#39;</span><span class="p">:</span> <span class="mf">0.25</span><span class="p">,</span>
+                     <span class="s1">&#39;C&#39;</span><span class="p">:</span> <span class="mf">0.25</span><span class="p">,</span>
+                     <span class="s1">&#39;G&#39;</span><span class="p">:</span> <span class="mf">0.25</span><span class="p">,</span>
+                     <span class="s1">&#39;T&#39;</span><span class="p">:</span> <span class="mf">0.25</span>
+                     <span class="p">}</span>
+
+
+<div class="viewcode-block" id="compute_gc_fraction">
+<a class="viewcode-back" href="../../../modules/bigprot.html#orfdb.bigprot.sequence_tools.compute_gc_fraction">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">compute_gc_fraction</span><span class="p">(</span><span class="n">sequence</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Compute the GC content of a sequence.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    sequence : str</span>
+<span class="sd">        The sequence to compute the GC content for.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    float</span>
+<span class="sd">        The GC content of the sequence.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">gc_count</span> <span class="o">=</span> <span class="mi">0</span>
+    <span class="n">non_standard_counts</span> <span class="o">=</span> <span class="n">collections</span><span class="o">.</span><span class="n">defaultdict</span><span class="p">(</span><span class="k">lambda</span><span class="p">:</span> <span class="mi">0</span><span class="p">)</span>
+
+    <span class="k">for</span> <span class="n">char</span> <span class="ow">in</span> <span class="n">sequence</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">char</span> <span class="ow">in</span> <span class="p">{</span><span class="s1">&#39;G&#39;</span><span class="p">,</span> <span class="s1">&#39;C&#39;</span><span class="p">}:</span>
+            <span class="n">gc_count</span> <span class="o">+=</span> <span class="mi">1</span>
+        <span class="k">elif</span> <span class="n">char</span> <span class="ow">not</span> <span class="ow">in</span> <span class="p">{</span><span class="s1">&#39;A&#39;</span><span class="p">,</span> <span class="s1">&#39;T&#39;</span><span class="p">}:</span>
+            <span class="n">non_standard_counts</span><span class="p">[</span><span class="n">char</span><span class="p">]</span> <span class="o">+=</span> <span class="mi">1</span>
+
+    <span class="k">if</span> <span class="n">non_standard_counts</span><span class="p">:</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span>
+            <span class="s1">&#39;Warning -- found non-standard nucleotide characters: </span><span class="si">%s</span><span class="s1">!&#39;</span><span class="p">,</span> <span class="nb">dict</span><span class="p">(</span><span class="n">non_standard_counts</span><span class="p">))</span>
+
+    <span class="n">gc_fraction</span> <span class="o">=</span> <span class="n">gc_count</span> <span class="o">/</span> \
+        <span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">sequence</span><span class="p">)</span> <span class="o">-</span> <span class="nb">sum</span><span class="p">(</span><span class="n">non_standard_counts</span><span class="o">.</span><span class="n">values</span><span class="p">()))</span>
+
+    <span class="k">return</span> <span class="n">gc_fraction</span></div>
+
+
+
+<div class="viewcode-block" id="compute_nuc_probs">
+<a class="viewcode-back" href="../../../modules/bigprot.html#orfdb.bigprot.sequence_tools.compute_nuc_probs">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">compute_nuc_probs</span><span class="p">(</span><span class="n">sequence</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">float</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Compute the nucleotide probabilities of a sequence.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    sequence : str</span>
+<span class="sd">        The sequence to compute the nucleotide probabilities for.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    dict[str, float]</span>
+<span class="sd">        A dictionary mapping each nucleotide to its probability in the sequence.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">gc_fraction</span> <span class="o">=</span> <span class="n">compute_gc_fraction</span><span class="p">(</span><span class="n">sequence</span><span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">generate_nuc_probs_from_gc</span><span class="p">(</span><span class="n">gc_fraction</span><span class="p">)</span></div>
+
+
+
+<div class="viewcode-block" id="generate_nuc_probs_from_gc">
+<a class="viewcode-back" href="../../../modules/bigprot.html#orfdb.bigprot.sequence_tools.generate_nuc_probs_from_gc">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">generate_nuc_probs_from_gc</span><span class="p">(</span><span class="n">gc_fraction</span><span class="p">:</span> <span class="nb">float</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">float</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Generate nucleotide probabilities from a GC content.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    gc_fraction : float</span>
+<span class="sd">        The GC content to generate the nucleotide probabilities from.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    dict[str, float]</span>
+<span class="sd">        A dictionary mapping each nucleotide to its probability based on the GC content.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">return</span> <span class="p">{</span><span class="s1">&#39;A&#39;</span><span class="p">:</span> <span class="p">(</span><span class="mi">1</span> <span class="o">-</span> <span class="n">gc_fraction</span><span class="p">)</span> <span class="o">/</span> <span class="mi">2</span><span class="p">,</span>
+            <span class="s1">&#39;C&#39;</span><span class="p">:</span> <span class="n">gc_fraction</span> <span class="o">/</span> <span class="mi">2</span><span class="p">,</span>
+            <span class="s1">&#39;G&#39;</span><span class="p">:</span> <span class="n">gc_fraction</span> <span class="o">/</span> <span class="mi">2</span><span class="p">,</span>
+            <span class="s1">&#39;T&#39;</span><span class="p">:</span> <span class="p">(</span><span class="mi">1</span> <span class="o">-</span> <span class="n">gc_fraction</span><span class="p">)</span> <span class="o">/</span> <span class="mi">2</span>
+            <span class="p">}</span></div>
+
+
+
+<div class="viewcode-block" id="extract_seq_blocks">
+<a class="viewcode-back" href="../../../modules/bigprot.html#orfdb.bigprot.sequence_tools.extract_seq_blocks">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">extract_seq_blocks</span><span class="p">(</span><span class="n">parent_seq</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">chrom_starts</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">int</span><span class="p">],</span> <span class="n">block_sizes</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">int</span><span class="p">],</span> <span class="n">source_coordinate_system</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">&#39;gff&#39;</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Extract sequence blocks from a parent sequence given start positions and block sizes.</span>
+<span class="sd">    Assumes gff-style intervals (1-based, fully-closed).</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    parent_seq : str</span>
+<span class="sd">        The parent sequence to extract the blocks from.</span>
+<span class="sd">    chrom_starts : list[int]</span>
+<span class="sd">        The start positions of the blocks.</span>
+<span class="sd">    block_sizes : list[int]</span>
+<span class="sd">        The sizes of the blocks.</span>
+<span class="sd">    source_coordinate_system : str</span>
+<span class="sd">        The coordinate system of the start positions and block sizes.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    list[str]</span>
+<span class="sd">        A list of strings representing the extracted sequence blocks.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">py_intervals</span> <span class="o">=</span> <span class="n">coordinates</span><span class="o">.</span><span class="n">convert_chrom_starts_and_block_sizes_to_intervals</span><span class="p">(</span><span class="n">chrom_starts</span><span class="o">=</span><span class="n">chrom_starts</span><span class="p">,</span>
+                                                                                 <span class="n">block_sizes</span><span class="o">=</span><span class="n">block_sizes</span><span class="p">,</span>
+                                                                                 <span class="n">source_type</span><span class="o">=</span><span class="n">source_coordinate_system</span><span class="p">,</span>
+                                                                                 <span class="n">destination_type</span><span class="o">=</span><span class="s1">&#39;python&#39;</span><span class="p">)</span>
+    <span class="n">py_chrom_starts</span><span class="p">,</span> <span class="n">py_block_ends</span> <span class="o">=</span> <span class="nb">zip</span><span class="p">(</span><span class="o">*</span><span class="n">py_intervals</span><span class="p">)</span>
+
+    <span class="n">seq_blocks</span> <span class="o">=</span> <span class="p">[]</span>
+
+    <span class="k">for</span> <span class="n">chrom_start</span><span class="p">,</span> <span class="n">block_end</span> <span class="ow">in</span> <span class="nb">zip</span><span class="p">(</span><span class="n">py_chrom_starts</span><span class="p">,</span> <span class="n">py_block_ends</span><span class="p">):</span>
+        <span class="k">assert</span> <span class="n">chrom_start</span> <span class="o">&gt;=</span> <span class="mi">0</span><span class="p">,</span> <span class="sa">f</span><span class="s1">&#39;Start </span><span class="si">{</span><span class="n">chrom_start</span><span class="si">}</span><span class="s1"> must be greater than or equal to 0.&#39;</span>
+        <span class="k">assert</span> <span class="n">block_end</span> <span class="o">&lt;=</span> <span class="nb">len</span><span class="p">(</span>
+            <span class="n">parent_seq</span><span class="p">),</span> <span class="sa">f</span><span class="s1">&#39;End </span><span class="si">{</span><span class="n">block_end</span><span class="si">}</span><span class="s1"> must be less than </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">parent_seq</span><span class="p">)</span><span class="si">}</span><span class="s1">&#39;</span>
+        <span class="n">seq_blocks</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">parent_seq</span><span class="p">[</span><span class="n">chrom_start</span><span class="p">:</span><span class="n">block_end</span><span class="p">])</span>
+
+    <span class="k">return</span> <span class="n">seq_blocks</span></div>
+
+
+
+<div class="viewcode-block" id="extract_sequence">
+<a class="viewcode-back" href="../../../modules/bigprot.html#orfdb.bigprot.sequence_tools.extract_sequence">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">extract_sequence</span><span class="p">(</span><span class="n">parent_seq</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+                     <span class="n">chrom_starts</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="nb">int</span><span class="p">],</span>
+                     <span class="n">block_sizes</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="nb">int</span><span class="p">],</span>
+                     <span class="n">strand</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+                     <span class="n">source_coordinate_system</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">&#39;gff&#39;</span><span class="p">,</span>
+                     <span class="n">seq_record_id</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">&#39;&#39;</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Union</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Bio</span><span class="o">.</span><span class="n">SeqIO</span><span class="o">.</span><span class="n">SeqRecord</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Extract a sequence from a parent sequence given start positions, block sizes, and strand.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    parent_seq : str</span>
+<span class="sd">        The parent sequence to extract from.</span>
+<span class="sd">    chrom_starts : list[int]</span>
+<span class="sd">        The start positions of the blocks.</span>
+<span class="sd">    block_sizes : list[int]</span>
+<span class="sd">        The sizes of the blocks.</span>
+<span class="sd">    source_coordinate_system : str</span>
+<span class="sd">        The coordinate system of the start positions and block sizes.</span>
+<span class="sd">    strand : str</span>
+<span class="sd">        The strand (&#39;+&#39; or &#39;-&#39;).</span>
+<span class="sd">    seq_record_id : str, optional</span>
+<span class="sd">        The sequence record ID.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    Union[str, Bio.SeqIO.SeqRecord]</span>
+<span class="sd">        The extracted sequence.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">validation</span><span class="o">.</span><span class="n">validate_strand</span><span class="p">(</span><span class="n">strand</span><span class="p">)</span>
+
+    <span class="n">seq_blocks</span> <span class="o">=</span> <span class="n">extract_seq_blocks</span><span class="p">(</span>
+        <span class="n">parent_seq</span><span class="p">,</span> <span class="n">chrom_starts</span><span class="p">,</span> <span class="n">block_sizes</span><span class="p">,</span> <span class="n">source_coordinate_system</span><span class="p">)</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="n">full_seq</span> <span class="o">=</span> <span class="s1">&#39;&#39;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">seq_blocks</span><span class="p">)</span>
+    <span class="k">except</span> <span class="ne">TypeError</span><span class="p">:</span>  <span class="c1"># Assume the blocks are Bio.Seqs then</span>
+        <span class="n">full_seq</span> <span class="o">=</span> <span class="s1">&#39;&#39;</span><span class="o">.</span><span class="n">join</span><span class="p">([</span><span class="nb">str</span><span class="p">(</span><span class="n">block</span><span class="o">.</span><span class="n">seq</span><span class="p">)</span> <span class="k">for</span> <span class="n">block</span> <span class="ow">in</span> <span class="n">seq_blocks</span><span class="p">])</span>
+
+    <span class="k">if</span> <span class="n">strand</span> <span class="o">==</span> <span class="s1">&#39;-&#39;</span><span class="p">:</span>
+        <span class="n">full_seq</span> <span class="o">=</span> <span class="n">Bio</span><span class="o">.</span><span class="n">Seq</span><span class="o">.</span><span class="n">reverse_complement</span><span class="p">(</span><span class="n">full_seq</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="n">seq_record_id</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">Bio</span><span class="o">.</span><span class="n">SeqIO</span><span class="o">.</span><span class="n">SeqRecord</span><span class="p">(</span><span class="n">Bio</span><span class="o">.</span><span class="n">Seq</span><span class="o">.</span><span class="n">Seq</span><span class="p">(</span><span class="n">full_seq</span><span class="p">),</span> <span class="nb">id</span><span class="o">=</span><span class="n">seq_record_id</span><span class="p">)</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">full_seq</span></div>
+
+
+
+<div class="viewcode-block" id="extract_transcript_sequence_from_genome">
+<a class="viewcode-back" href="../../../modules/bigprot.html#orfdb.bigprot.sequence_tools.extract_transcript_sequence_from_genome">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">extract_transcript_sequence_from_genome</span><span class="p">(</span><span class="n">transcript_dict</span><span class="p">:</span> <span class="n">Dict</span><span class="p">,</span> <span class="n">genome_dict</span><span class="p">:</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">],</span> <span class="n">seq_record_id</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">&#39;&#39;</span><span class="p">,</span>
+                                            <span class="n">source_coordinate_system</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="n">constants</span><span class="o">.</span><span class="n">TRANSCRIPT_COORDINATE_SYSTEM</span><span class="p">,</span>
+                                            <span class="n">accession_namespace</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="n">constants</span><span class="o">.</span><span class="n">DEFAULT_ACCESSION_NAMESPACE</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Union</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Bio</span><span class="o">.</span><span class="n">SeqIO</span><span class="o">.</span><span class="n">SeqRecord</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Extract a transcript sequence from a genome given a transcript dictionary and a genome dictionary.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    transcript_dict : dict</span>
+<span class="sd">        The transcript dictionary.</span>
+<span class="sd">    genome_dict : dict[str, str]</span>
+<span class="sd">        The genome dictionary.</span>
+<span class="sd">    seq_record_id : str, optional</span>
+<span class="sd">        The sequence record ID.</span>
+<span class="sd">    source_coordinate_system : str, optional</span>
+<span class="sd">        The coordinate system of the start positions and block sizes (default is &#39;velia&#39;).</span>
+<span class="sd">    accession_namespace : str, optional</span>
+<span class="sd">        The accession namespace (default is &#39;genbank&#39;).</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    Union[str, Bio.SeqIO.SeqRecord]</span>
+<span class="sd">        The extracted transcript sequence.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="s1">&#39;Extracting genomic sequence of transcript </span><span class="si">%s</span><span class="s1"> ...&#39;</span><span class="p">,</span>
+                 <span class="n">transcript_dict</span><span class="p">[</span><span class="s1">&#39;transcript.id&#39;</span><span class="p">])</span>
+    <span class="n">validation</span><span class="o">.</span><span class="n">validate_coordinate_type</span><span class="p">(</span><span class="n">source_coordinate_system</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="n">transcript_dict</span><span class="p">[</span><span class="s1">&#39;transcript.chrom_starts&#39;</span><span class="p">]</span> <span class="ow">and</span> <span class="n">transcript_dict</span><span class="p">[</span><span class="s1">&#39;transcript.block_sizes&#39;</span><span class="p">]:</span>
+        <span class="n">chrom_starts</span><span class="p">,</span> <span class="n">block_sizes</span> <span class="o">=</span> <span class="n">misc</span><span class="o">.</span><span class="n">extract_numeric_vector</span><span class="p">(</span>
+            <span class="n">transcript_dict</span><span class="p">[</span><span class="s1">&#39;transcript.chrom_starts&#39;</span><span class="p">]),</span> <span class="n">misc</span><span class="o">.</span><span class="n">extract_numeric_vector</span><span class="p">(</span>
+            <span class="n">transcript_dict</span><span class="p">[</span><span class="s1">&#39;transcript.block_sizes&#39;</span><span class="p">])</span>
+    <span class="k">else</span><span class="p">:</span>  <span class="c1"># if empty, make the whole transcript one block</span>
+        <span class="n">full_interval</span> <span class="o">=</span> <span class="n">coordinates</span><span class="o">.</span><span class="n">IntervalFactory</span><span class="o">.</span><span class="n">make_interval</span><span class="p">(</span><span class="n">source_coordinate_system</span><span class="p">)(</span><span class="n">start</span><span class="o">=</span><span class="nb">int</span><span class="p">(</span><span class="n">transcript_dict</span><span class="p">[</span><span class="s1">&#39;transcript.start&#39;</span><span class="p">]),</span>
+                                                                                            <span class="n">end</span><span class="o">=</span><span class="nb">int</span><span class="p">(</span><span class="n">transcript_dict</span><span class="p">[</span><span class="s1">&#39;transcript.end&#39;</span><span class="p">]))</span>
+        <span class="n">chrom_starts</span> <span class="o">=</span> <span class="p">[</span><span class="n">full_interval</span><span class="o">.</span><span class="n">python_start</span><span class="p">]</span>
+        <span class="n">block_sizes</span> <span class="o">=</span> <span class="p">[</span><span class="n">full_interval</span><span class="o">.</span><span class="n">python_size</span><span class="p">]</span>
+        <span class="n">source_coordinate_system</span> <span class="o">=</span> <span class="s1">&#39;python&#39;</span>
+
+
+    <span class="n">extracted_sequence</span> <span class="o">=</span> <span class="n">extract_sequence</span><span class="p">(</span>
+        <span class="n">parent_seq</span><span class="o">=</span><span class="n">genome_dict</span><span class="p">[</span><span class="n">transcript_dict</span><span class="p">[</span><span class="sa">f</span><span class="s1">&#39;assembly.</span><span class="si">{</span><span class="n">accession_namespace</span><span class="si">}</span><span class="s1">_accession&#39;</span><span class="p">]],</span>
+        <span class="n">chrom_starts</span><span class="o">=</span><span class="n">chrom_starts</span><span class="p">,</span>
+        <span class="n">block_sizes</span><span class="o">=</span><span class="n">block_sizes</span><span class="p">,</span>
+        <span class="n">strand</span><span class="o">=</span><span class="n">transcript_dict</span><span class="p">[</span><span class="s1">&#39;transcript.strand&#39;</span><span class="p">],</span>
+        <span class="n">source_coordinate_system</span><span class="o">=</span><span class="n">source_coordinate_system</span><span class="p">,</span>
+        <span class="n">seq_record_id</span><span class="o">=</span><span class="n">seq_record_id</span><span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">extracted_sequence</span></div>
+
+
+
+<div class="viewcode-block" id="extract_orf_sequence_from_genome">
+<a class="viewcode-back" href="../../../modules/bigprot.html#orfdb.bigprot.sequence_tools.extract_orf_sequence_from_genome">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">extract_orf_sequence_from_genome</span><span class="p">(</span><span class="n">aliased_orf_dict</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">typing</span><span class="o">.</span><span class="n">Any</span><span class="p">],</span> <span class="n">genome_dict</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">],</span> <span class="n">seq_record_id</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">&#39;&#39;</span><span class="p">,</span> <span class="n">source_coordinate_system</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">&#39;gff&#39;</span><span class="p">,</span> <span class="n">accession_namespace</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="n">constants</span><span class="o">.</span><span class="n">DEFAULT_ACCESSION_NAMESPACE</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Extract an ORF sequence from a genome given an aliased ORF dictionary and a genome dictionary.</span>
+<span class="sd">    Assumes gff-style intervals (1-based, fully-closed).</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    aliased_orf_dict : dict[str, typing.Any]</span>
+<span class="sd">        The aliased ORF dictionary.</span>
+<span class="sd">    genome_dict : dict[str, str]</span>
+<span class="sd">        The genome dictionary.</span>
+<span class="sd">    seq_record_id : str, optional</span>
+<span class="sd">        The sequence record ID.</span>
+<span class="sd">    source_coordinate_system : str, optional</span>
+<span class="sd">        The coordinate system of the start positions and block sizes (default is &#39;gff&#39;).</span>
+<span class="sd">    accession_namespace : str, optional</span>
+<span class="sd">        The accession namespace (default is &#39;genbank&#39;).</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    str</span>
+<span class="sd">        The extracted ORF sequence.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="s1">&#39;Extracting genomic sequence of ORF </span><span class="si">%s</span><span class="s1"> ...&#39;</span><span class="p">,</span>
+                 <span class="n">aliased_orf_dict</span><span class="p">[</span><span class="s1">&#39;orf.orf_idx_str&#39;</span><span class="p">])</span>
+    <span class="n">validation</span><span class="o">.</span><span class="n">validate_coordinate_type</span><span class="p">(</span><span class="n">source_coordinate_system</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="n">aliased_orf_dict</span><span class="p">[</span><span class="s1">&#39;orf.chrom_starts&#39;</span><span class="p">]</span> <span class="ow">and</span> <span class="n">aliased_orf_dict</span><span class="p">[</span><span class="s1">&#39;orf.block_sizes&#39;</span><span class="p">]:</span>
+        <span class="n">chrom_starts</span><span class="p">,</span> <span class="n">block_sizes</span> <span class="o">=</span> <span class="n">misc</span><span class="o">.</span><span class="n">extract_numeric_vector</span><span class="p">(</span>
+            <span class="n">aliased_orf_dict</span><span class="p">[</span><span class="s1">&#39;orf.chrom_starts&#39;</span><span class="p">]),</span> <span class="n">misc</span><span class="o">.</span><span class="n">extract_numeric_vector</span><span class="p">(</span>
+            <span class="n">aliased_orf_dict</span><span class="p">[</span><span class="s1">&#39;orf.block_sizes&#39;</span><span class="p">])</span>
+    <span class="k">else</span><span class="p">:</span>  <span class="c1"># if empty, make the whole ORF one block</span>
+        <span class="n">full_interval</span> <span class="o">=</span> <span class="n">coordinates</span><span class="o">.</span><span class="n">IntervalFactory</span><span class="o">.</span><span class="n">make_interval</span><span class="p">(</span><span class="n">source_coordinate_system</span><span class="p">)(</span><span class="n">start</span><span class="o">=</span><span class="nb">int</span><span class="p">(</span><span class="n">aliased_orf_dict</span><span class="p">[</span><span class="s1">&#39;transcript.start&#39;</span><span class="p">]),</span>
+                                                                                            <span class="n">end</span><span class="o">=</span><span class="nb">int</span><span class="p">(</span><span class="n">aliased_orf_dict</span><span class="p">[</span><span class="s1">&#39;transcript.end&#39;</span><span class="p">]))</span>
+        <span class="n">chrom_starts</span> <span class="o">=</span> <span class="p">[</span><span class="n">full_interval</span><span class="o">.</span><span class="n">python_start</span><span class="p">]</span>
+        <span class="n">block_sizes</span> <span class="o">=</span> <span class="p">[</span><span class="n">full_interval</span><span class="o">.</span><span class="n">python_size</span><span class="p">]</span>
+        <span class="n">source_coordinate_system</span> <span class="o">=</span> <span class="s1">&#39;python&#39;</span>
+
+    <span class="n">extracted_sequence</span> <span class="o">=</span> <span class="n">extract_sequence</span><span class="p">(</span><span class="n">parent_seq</span><span class="o">=</span><span class="n">genome_dict</span><span class="p">[</span><span class="n">aliased_orf_dict</span><span class="p">[</span><span class="sa">f</span><span class="s1">&#39;assembly.</span><span class="si">{</span><span class="n">accession_namespace</span><span class="si">}</span><span class="s1">_accession&#39;</span><span class="p">]],</span>
+                                          <span class="n">chrom_starts</span><span class="o">=</span><span class="n">chrom_starts</span><span class="p">,</span>
+                                          <span class="n">block_sizes</span><span class="o">=</span><span class="n">block_sizes</span><span class="p">,</span>
+                                          <span class="n">strand</span><span class="o">=</span><span class="n">aliased_orf_dict</span><span class="p">[</span><span class="s1">&#39;orf.strand&#39;</span><span class="p">],</span>
+                                          <span class="n">seq_record_id</span><span class="o">=</span><span class="n">seq_record_id</span><span class="p">,</span>
+                                          <span class="n">source_coordinate_system</span><span class="o">=</span><span class="n">source_coordinate_system</span><span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">extracted_sequence</span></div>
+
+
+
+<div class="viewcode-block" id="split_sequence_into_codons">
+<a class="viewcode-back" href="../../../modules/bigprot.html#orfdb.bigprot.sequence_tools.split_sequence_into_codons">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">split_sequence_into_codons</span><span class="p">(</span><span class="n">nucleotide_sequence</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">frame</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">0</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Split a nucleotide sequence into codons given a frame.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    nucleotide_sequence : str</span>
+<span class="sd">        The nucleotide sequence to split.</span>
+<span class="sd">    frame : int, optional</span>
+<span class="sd">        The frame (default is 0).</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    list[str]</span>
+<span class="sd">        A list of strings representing the codons.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">validation</span><span class="o">.</span><span class="n">validate_frame</span><span class="p">(</span><span class="n">frame</span><span class="p">)</span>
+
+    <span class="n">codons</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">((</span><span class="nb">len</span><span class="p">(</span><span class="n">nucleotide_sequence</span><span class="p">)</span> <span class="o">-</span> <span class="n">frame</span><span class="p">)</span> <span class="o">//</span> <span class="mi">3</span><span class="p">):</span>
+        <span class="n">codon_start</span> <span class="o">=</span> <span class="n">i</span> <span class="o">*</span> <span class="mi">3</span> <span class="o">+</span> <span class="n">frame</span>
+        <span class="n">codon_end</span> <span class="o">=</span> <span class="n">codon_start</span> <span class="o">+</span> <span class="mi">3</span>
+        <span class="n">codons</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">nucleotide_sequence</span><span class="p">[</span><span class="n">codon_start</span><span class="p">:</span><span class="n">codon_end</span><span class="p">])</span>
+    <span class="k">return</span> <span class="n">codons</span></div>
+
+
+
+<div class="viewcode-block" id="extract_orf_start_context">
+<a class="viewcode-back" href="../../../modules/bigprot.html#orfdb.bigprot.sequence_tools.extract_orf_start_context">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">extract_orf_start_context</span><span class="p">(</span><span class="n">orf_object</span><span class="p">:</span> <span class="n">orf_classes</span><span class="o">.</span><span class="n">OrfBase</span><span class="p">,</span>
+                              <span class="n">parent_transcript_seq</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+                              <span class="n">upstream_length</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+                              <span class="n">downstream_length</span><span class="p">:</span> <span class="nb">int</span>
+                              <span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Extract the start context of an ORF, which is the potential Kozak sequence starting 4 bp upstream and ending 1 bp downstream of the start codon.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    orf_object : orf_classes.OrfBase</span>
+<span class="sd">        The ORF object containing ORF information such as start position and nucleotide length.</span>
+<span class="sd">    parent_transcript_seq : Bio.SeqIO.SeqRecord</span>
+<span class="sd">        The parent transcript sequence from which the ORF start context will be extracted.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    tuple[str, str]</span>
+<span class="sd">        A tuple of strings representing the upstream and downstream sequences of the ORF start context.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">assert</span> <span class="n">orf_object</span><span class="o">.</span><span class="n">start_pos</span> <span class="o">&gt;=</span> <span class="n">upstream_length</span><span class="p">,</span> <span class="s1">&#39;ORF </span><span class="si">%s</span><span class="s1"> start position must be greater or equal to </span><span class="si">%s</span><span class="s1"> for a valid Kozak sequence!&#39;</span> <span class="o">%</span> <span class="p">(</span>
+        <span class="n">orf_object</span><span class="p">,</span> <span class="n">upstream_length</span><span class="p">)</span>
+    <span class="k">assert</span> <span class="n">orf_object</span><span class="o">.</span><span class="n">nuc_length</span> <span class="o">&gt;=</span> <span class="n">downstream_length</span> <span class="o">+</span> \
+        <span class="mi">3</span><span class="p">,</span> <span class="s1">&#39;ORF </span><span class="si">%s</span><span class="s1"> nucleotide length must be greater or equal to </span><span class="si">%s</span><span class="s1"> for a valid Kozak sequence!&#39;</span> <span class="o">%</span> <span class="p">(</span>
+            <span class="n">orf_object</span><span class="p">,</span> <span class="n">downstream_length</span> <span class="o">+</span> <span class="mi">3</span><span class="p">)</span>
+
+    <span class="n">upstream_seq</span> <span class="o">=</span> <span class="n">parent_transcript_seq</span><span class="p">[</span><span class="n">orf_object</span><span class="o">.</span><span class="n">start_pos</span> <span class="o">-</span>
+                                         <span class="n">upstream_length</span><span class="p">:</span><span class="n">orf_object</span><span class="o">.</span><span class="n">start_pos</span><span class="p">]</span>
+    <span class="n">downstream_seq</span> <span class="o">=</span> <span class="n">parent_transcript_seq</span><span class="p">[</span><span class="n">orf_object</span><span class="o">.</span><span class="n">start_pos</span> <span class="o">+</span>
+                                           <span class="mi">3</span><span class="p">:</span><span class="n">orf_object</span><span class="o">.</span><span class="n">start_pos</span><span class="o">+</span><span class="mi">3</span> <span class="o">+</span> <span class="n">downstream_length</span><span class="p">]</span>
+    <span class="k">assert</span> <span class="nb">len</span><span class="p">(</span><span class="n">upstream_seq</span><span class="p">)</span> <span class="o">==</span> <span class="n">upstream_length</span>
+    <span class="k">assert</span> <span class="nb">len</span><span class="p">(</span><span class="n">downstream_seq</span><span class="p">)</span> <span class="o">==</span> <span class="n">downstream_length</span>
+
+    <span class="k">return</span> <span class="n">upstream_seq</span><span class="p">,</span> <span class="n">downstream_seq</span></div>
+
+
+
+<div class="viewcode-block" id="find_internal_stop_codons">
+<a class="viewcode-back" href="../../../modules/bigprot.html#orfdb.bigprot.sequence_tools.find_internal_stop_codons">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">find_internal_stop_codons</span><span class="p">(</span><span class="n">orf_dict</span><span class="p">:</span> <span class="n">Dict</span><span class="p">,</span> <span class="n">genome</span><span class="p">:</span> <span class="n">Dict</span><span class="p">,</span> <span class="n">stop_codons</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">]]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">accession_namespace</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="n">constants</span><span class="o">.</span><span class="n">DEFAULT_ACCESSION_NAMESPACE</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">List</span><span class="p">[</span>
+        <span class="n">Tuple</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">str</span><span class="p">]]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Find internal stop codons in the ORF sequence.</span>
+<span class="sd">    Args:</span>
+<span class="sd">        orf_dict (Dict): Dictionary containing ORF information.</span>
+<span class="sd">        genome (Dict): Dictionary containing genome information.</span>
+<span class="sd">        stop_codons (Optional[List[str]]): List of stop codons. Defaults to [&#39;TGA&#39;, &#39;TAA&#39;, &#39;TAG&#39;].</span>
+<span class="sd">    Returns:</span>
+<span class="sd">        List[Tuple[int, str]]: List of tuples containing the index and codon of internal stop codons.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="n">stop_codons</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">stop_codons</span> <span class="o">=</span> <span class="n">constants</span><span class="o">.</span><span class="n">DEFAULT_STOP_CODONS</span>
+    <span class="n">stop_codons</span> <span class="o">=</span> <span class="nb">set</span><span class="p">(</span><span class="n">stop_codons</span><span class="p">)</span>
+    <span class="n">orf_sequence</span> <span class="o">=</span> <span class="n">extract_orf_sequence_from_genome</span><span class="p">(</span><span class="n">aliased_orf_dict</span><span class="o">=</span><span class="n">orf_dict</span><span class="p">,</span>
+                                                    <span class="n">genome_dict</span><span class="o">=</span><span class="n">genome</span><span class="p">,</span> <span class="n">source_coordinate_system</span><span class="o">=</span><span class="s1">&#39;gff&#39;</span><span class="p">,</span>
+                                                    <span class="n">accession_namespace</span><span class="o">=</span><span class="n">accession_namespace</span><span class="p">)</span>
+    <span class="n">orf_phases</span> <span class="o">=</span> <span class="n">misc</span><span class="o">.</span><span class="n">extract_numeric_vector</span><span class="p">(</span><span class="n">orf_dict</span><span class="p">[</span><span class="s1">&#39;orf.phases&#39;</span><span class="p">])</span>
+
+    <span class="n">validation</span><span class="o">.</span><span class="n">validate_strand</span><span class="p">(</span><span class="n">orf_dict</span><span class="p">[</span><span class="s1">&#39;orf.strand&#39;</span><span class="p">])</span>
+
+    <span class="k">if</span> <span class="n">orf_dict</span><span class="p">[</span><span class="s1">&#39;orf.strand&#39;</span><span class="p">]</span> <span class="o">==</span> <span class="s1">&#39;-&#39;</span><span class="p">:</span>
+        <span class="n">initial_orf_phase</span> <span class="o">=</span> <span class="n">orf_phases</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="n">initial_orf_phase</span> <span class="o">=</span> <span class="n">orf_phases</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+
+    <span class="n">validation</span><span class="o">.</span><span class="n">validate_phase</span><span class="p">(</span><span class="n">initial_orf_phase</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="n">initial_orf_phase</span> <span class="o">!=</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="n">orf_sequence</span> <span class="o">=</span> <span class="n">orf_sequence</span><span class="p">[</span><span class="n">initial_orf_phase</span><span class="p">:]</span>
+
+    <span class="n">internal_stop_codons</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="k">for</span> <span class="n">codon_idx</span><span class="p">,</span> <span class="n">codon</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">split_sequence_into_codons</span><span class="p">(</span><span class="n">orf_sequence</span><span class="p">)[:</span><span class="o">-</span><span class="mi">1</span><span class="p">]):</span>
+        <span class="k">if</span> <span class="n">codon</span> <span class="ow">in</span> <span class="n">stop_codons</span><span class="p">:</span>
+            <span class="n">internal_stop_codons</span><span class="o">.</span><span class="n">append</span><span class="p">((</span><span class="n">codon_idx</span><span class="p">,</span> <span class="n">codon</span><span class="p">))</span>
+
+    <span class="k">return</span> <span class="n">internal_stop_codons</span></div>
+
+
+
+<div class="viewcode-block" id="get_sequence_record">
+<a class="viewcode-back" href="../../../modules/bigprot.html#orfdb.bigprot.sequence_tools.get_sequence_record">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">get_sequence_record</span><span class="p">(</span>
+    <span class="n">sequence</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">seq_record_id</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">&#39;&#39;</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Union</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Bio</span><span class="o">.</span><span class="n">SeqIO</span><span class="o">.</span><span class="n">SeqRecord</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Get sequence record from string.&quot;&quot;&quot;</span></div>
+
+    <span class="c1"># ... rest of the function ...</span>
+
+
+<div class="viewcode-block" id="get_sequence_from_fasta">
+<a class="viewcode-back" href="../../../modules/bigprot.html#orfdb.bigprot.sequence_tools.get_sequence_from_fasta">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">get_sequence_from_fasta</span><span class="p">(</span>
+    <span class="n">fasta_fpath</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">accession_namespace</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="n">constants</span><span class="o">.</span><span class="n">DEFAULT_ACCESSION_NAMESPACE</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Union</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Bio</span><span class="o">.</span><span class="n">SeqIO</span><span class="o">.</span><span class="n">SeqRecord</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Get sequence from FASTA file.&quot;&quot;&quot;</span></div>
+
+    <span class="c1"># ... rest of the function ...</span>
+</pre></div>
+
+           </div>
+          </div>
+          <footer>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright 2024, orfdb developers.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>

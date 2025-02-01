@@ -5,12 +5,42 @@
 from configparser import ConfigParser, NoOptionError
 from pathlib import Path
 from sys import modules
-import os
+import os, re
+from packaging.version import Version
 
 self = modules[__name__]
 settings_ini = (Path(*Path(os.path.abspath(__file__)).parts[:-2]) / 'settings.ini').resolve()
 
 config_parser = ConfigParser()
+
+def get_highest_version_folder(directory):
+    """
+    Finds the folder with the highest version number in the specified directory.
+    
+    Args:
+        directory (str or Path): Path to the directory to scan.
+    
+    Returns:
+        Path or None: The folder with the highest version, or None if no valid version folders are found.
+    """
+    directory = Path(directory)
+    if not directory.is_dir():
+        raise ValueError(f"{directory} is not a valid directory.")
+    
+    version_folders = {}
+    version_pattern = re.compile(r"^v\d+(\.\d+)*$")  # Matches version-like patterns (e.g., 1.0.0)
+
+    for folder in directory.iterdir():
+        if folder.is_dir() and version_pattern.match(folder.name):
+            try:
+                version_folders[folder] = Version(folder.name)
+            except ValueError:
+                pass  # Ignore folders that don't follow proper versioning
+
+    if version_folders:
+        return max(version_folders, key=version_folders.get)
+    return None
+
 
 # overwrite defaults settings with settings from the file
 if settings_ini.exists():
@@ -67,3 +97,13 @@ try:
     self.velia_directory = Path(config['DATA']['velia_directory'])
 except NoOptionError:
     raise Exception('velia_directory was not supplied in settings.ini')
+
+try:
+    self.bigprot_directory = Path(config['DATA']['bigprot_directory'])
+except NoOptionError:
+    raise Exception('bigprot_directory was not supplied in settings.ini')
+
+try:
+    self.bigprot_version = get_highest_version_folder(self.bigprot_directory).name
+except NoOptionError:
+    raise Exception('bigprot_version was not supplied in settings.ini')

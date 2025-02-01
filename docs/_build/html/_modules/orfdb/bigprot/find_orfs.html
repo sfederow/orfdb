@@ -1,0 +1,422 @@
+
+
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" data-content_root="../../../">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>orfdb.bigprot.find_orfs &mdash; orfdb 1.0 documentation</title>
+      <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css?v=b86133f3" />
+      <link rel="stylesheet" type="text/css" href="../../../_static/css/theme.css?v=e59714d7" />
+
+  
+      <script src="../../../_static/jquery.js?v=5d32c60e"></script>
+      <script src="../../../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+      <script src="../../../_static/documentation_options.js?v=f2a433a1"></script>
+      <script src="../../../_static/doctools.js?v=9a2dae69"></script>
+      <script src="../../../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script src="../../../_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="../../../genindex.html" />
+    <link rel="search" title="Search" href="../../../search.html" /> 
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="../../../index.html" class="icon icon-home">
+            orfdb
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="../../../search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">Contents:</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../modules/base.html">Base Module</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../modules/load_db.html">Database Loading Module</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../modules/annotation_loading.html">Annotation Loading Module</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../modules/settings.html">Settings Module</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../modules/util.html">Utilities Module</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../modules/bigprot.html">BigProt Module</a></li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../../../index.html">orfdb</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="../../../index.html" class="icon icon-home" aria-label="Home"></a></li>
+          <li class="breadcrumb-item"><a href="../../index.html">Module code</a></li>
+      <li class="breadcrumb-item active">orfdb.bigprot.find_orfs</li>
+      <li class="wy-breadcrumbs-aside">
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <h1>Source code for orfdb.bigprot.find_orfs</h1><div class="highlight"><pre>
+<span></span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">This script is used to find Open Reading Frames (ORFs) in a set of sequences. It takes as input a FASTA file containing genomic sequences, </span>
+<span class="sd">and a settings.ini file containing the credentials to access the veliaDB. The script also allows for customization of codon settings, </span>
+<span class="sd">including start and stop codons, and minimum and maximum codon length. Advanced settings such as the glob pattern for files containing </span>
+<span class="sd">phylocsf bigwig tracks for 3 frames on both strands, and the number of simultaneous processes to run can also be specified. </span>
+<span class="sd">The output is logged in a specified output path.</span>
+<span class="sd">&quot;&quot;&quot;</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">argparse</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">gzip</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">logging</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">os</span><span class="o">,</span><span class="w"> </span><span class="nn">re</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">sys</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">List</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">Bio.SeqIO</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">tqdm</span><span class="w"> </span><span class="kn">import</span> <span class="n">tqdm</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">orfdb.bigprot</span><span class="w"> </span><span class="kn">import</span> <span class="n">bigwig_tracks</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">orfdb.bigprot</span><span class="w"> </span><span class="kn">import</span> <span class="n">constants</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">orfdb.bigprot</span><span class="w"> </span><span class="kn">import</span> <span class="n">db_utils</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">orfdb.bigprot</span><span class="w"> </span><span class="kn">import</span> <span class="n">gwas_tools</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">orfdb.bigprot</span><span class="w"> </span><span class="kn">import</span> <span class="n">gff_tools</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">orfdb.bigprot</span><span class="w"> </span><span class="kn">import</span> <span class="n">orf_calling</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">orfdb</span><span class="w"> </span><span class="kn">import</span> <span class="n">settings</span>
+
+<span class="n">logger</span> <span class="o">=</span> <span class="n">logging</span><span class="o">.</span><span class="n">Logger</span><span class="p">(</span><span class="s1">&#39;placeholder&#39;</span><span class="p">)</span>
+
+
+<div class="viewcode-block" id="setup_logger">
+<a class="viewcode-back" href="../../../modules/bigprot.html#orfdb.bigprot.find_orfs.setup_logger">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">setup_logger</span><span class="p">(</span><span class="n">log_fpath</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">verbosity</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="n">logging</span><span class="o">.</span><span class="n">INFO</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Set up the logger.</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        log_fpath (str): The path to the log file.</span>
+<span class="sd">        verbosity (int, optional): The level of logging. Defaults to logging.INFO.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">global</span> <span class="n">logger</span>
+    <span class="n">logger</span> <span class="o">=</span> <span class="n">logging</span><span class="o">.</span><span class="n">getLogger</span><span class="p">()</span>
+    <span class="n">logger</span><span class="o">.</span><span class="n">setLevel</span><span class="p">(</span><span class="n">logging</span><span class="o">.</span><span class="n">DEBUG</span><span class="p">)</span>
+
+    <span class="c1"># create console handler and set level to debug</span>
+    <span class="n">ch</span> <span class="o">=</span> <span class="n">logging</span><span class="o">.</span><span class="n">StreamHandler</span><span class="p">()</span>
+    <span class="n">ch</span><span class="o">.</span><span class="n">setLevel</span><span class="p">(</span><span class="n">verbosity</span><span class="p">)</span>
+
+    <span class="c1"># create file handler</span>
+    <span class="n">fh</span> <span class="o">=</span> <span class="n">logging</span><span class="o">.</span><span class="n">FileHandler</span><span class="p">(</span><span class="n">log_fpath</span><span class="p">,</span> <span class="n">mode</span><span class="o">=</span><span class="s1">&#39;w&#39;</span><span class="p">)</span>
+    <span class="n">fh</span><span class="o">.</span><span class="n">setLevel</span><span class="p">(</span><span class="n">verbosity</span><span class="p">)</span>
+
+    <span class="c1"># create formatter and add it to the handlers</span>
+    <span class="n">formatter</span> <span class="o">=</span> <span class="n">logging</span><span class="o">.</span><span class="n">Formatter</span><span class="p">(</span>
+        <span class="s1">&#39;</span><span class="si">%(asctime)s</span><span class="s1"> - </span><span class="si">%(name)s</span><span class="s1"> - </span><span class="si">%(levelname)s</span><span class="s1"> - </span><span class="si">%(message)s</span><span class="s1">&#39;</span><span class="p">)</span>
+    <span class="n">ch</span><span class="o">.</span><span class="n">setFormatter</span><span class="p">(</span><span class="n">formatter</span><span class="p">)</span>
+    <span class="n">fh</span><span class="o">.</span><span class="n">setFormatter</span><span class="p">(</span><span class="n">formatter</span><span class="p">)</span>
+
+    <span class="c1"># add the handlers to logger</span>
+    <span class="n">logger</span><span class="o">.</span><span class="n">addHandler</span><span class="p">(</span><span class="n">ch</span><span class="p">)</span>
+    <span class="n">logger</span><span class="o">.</span><span class="n">addHandler</span><span class="p">(</span><span class="n">fh</span><span class="p">)</span>
+
+    <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s1">&#39;Logger set up at level </span><span class="si">%s</span><span class="s1"> and writing to </span><span class="si">%s</span><span class="s1">.&#39;</span><span class="p">,</span> 
+        <span class="n">verbosity</span><span class="p">,</span> <span class="n">log_fpath</span><span class="p">)</span></div>
+
+
+
+<div class="viewcode-block" id="setup_argparser">
+<a class="viewcode-back" href="../../../modules/bigprot.html#orfdb.bigprot.find_orfs.setup_argparser">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">setup_argparser</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="n">argparse</span><span class="o">.</span><span class="n">Namespace</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Set up and execute the argument parser.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        argparse.Namespace: The parsed arguments.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">parser</span> <span class="o">=</span> <span class="n">argparse</span><span class="o">.</span><span class="n">ArgumentParser</span><span class="p">(</span>
+        <span class="n">description</span><span class="o">=</span><span class="s1">&#39;Find ORFs in a set of sequences.&#39;</span><span class="p">)</span>
+
+    <span class="c1"># Group: Basic settings</span>
+    <span class="n">basic_group</span> <span class="o">=</span> <span class="n">parser</span><span class="o">.</span><span class="n">add_argument_group</span><span class="p">(</span><span class="s1">&#39;Basic settings&#39;</span><span class="p">)</span>
+
+    <span class="n">basic_group_exclusive</span> <span class="o">=</span> <span class="n">basic_group</span><span class="o">.</span><span class="n">add_mutually_exclusive_group</span><span class="p">(</span>
+        <span class="n">required</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="n">basic_group_exclusive</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s1">&#39;-s&#39;</span><span class="p">,</span> <span class="s1">&#39;--db-settings&#39;</span><span class="p">,</span> <span class="nb">type</span><span class="o">=</span><span class="nb">str</span><span class="p">,</span>
+                                       <span class="n">help</span><span class="o">=</span><span class="s1">&#39;Path to the settings.ini file that contains the credentials to access veliaDB for obtaining transcript information. Mutally exlusive with --gtf-file.&#39;</span><span class="p">,)</span>
+    <span class="n">basic_group_exclusive</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s1">&#39;-gf&#39;</span><span class="p">,</span> <span class="s1">&#39;--gtf-file&#39;</span><span class="p">,</span> <span class="nb">type</span><span class="o">=</span><span class="nb">str</span><span class="p">,</span>
+                                       <span class="n">help</span><span class="o">=</span><span class="s1">&#39;Path to a GTF file from which to obtain transcript information. Mutally exclusive with --db-settings.&#39;</span><span class="p">)</span>
+    <span class="n">basic_group</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s1">&#39;-o&#39;</span><span class="p">,</span> <span class="s1">&#39;--output&#39;</span><span class="p">,</span> <span class="nb">type</span><span class="o">=</span><span class="nb">str</span><span class="p">,</span> <span class="n">required</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+                             <span class="n">help</span><span class="o">=</span><span class="s1">&#39;Output path.&#39;</span><span class="p">)</span>
+    <span class="n">basic_group</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s1">&#39;-v&#39;</span><span class="p">,</span> <span class="s1">&#39;--verbose&#39;</span><span class="p">,</span> <span class="n">action</span><span class="o">=</span><span class="s1">&#39;store_true&#39;</span><span class="p">,</span>
+                             <span class="n">help</span><span class="o">=</span><span class="s1">&#39;Set verbose logging on.&#39;</span><span class="p">)</span>
+    <span class="n">basic_group</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s1">&#39;-d&#39;</span><span class="p">,</span> <span class="s1">&#39;--dataset-name&#39;</span><span class="p">,</span> <span class="nb">type</span><span class="o">=</span><span class="nb">str</span><span class="p">,</span> <span class="n">required</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+                             <span class="n">help</span><span class="o">=</span><span class="s1">&#39;Name of the dataset.&#39;</span><span class="p">)</span>
+    <span class="n">basic_group</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s1">&#39;-f&#39;</span><span class="p">,</span> <span class="s1">&#39;--fasta-file&#39;</span><span class="p">,</span> <span class="nb">type</span><span class="o">=</span><span class="nb">str</span><span class="p">,</span> <span class="n">required</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+                             <span class="n">help</span><span class="o">=</span><span class="s1">&#39;Path to a FASTA file containing genomic sequences.&#39;</span><span class="p">)</span>
+
+    <span class="c1"># Group: Codon settings</span>
+    <span class="n">codon_group</span> <span class="o">=</span> <span class="n">parser</span><span class="o">.</span><span class="n">add_argument_group</span><span class="p">(</span><span class="s1">&#39;Codon settings&#39;</span><span class="p">)</span>
+    <span class="n">codon_group</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s1">&#39;-sc&#39;</span><span class="p">,</span> <span class="s1">&#39;--start-codons&#39;</span><span class="p">,</span> <span class="nb">type</span><span class="o">=</span><span class="nb">str</span><span class="p">,</span> <span class="n">default</span><span class="o">=</span><span class="n">constants</span><span class="o">.</span><span class="n">DEFAULT_START_CODONS</span><span class="p">,</span>
+                             <span class="n">help</span><span class="o">=</span><span class="sa">f</span><span class="s1">&#39;Start codons (optional, default value </span><span class="si">{</span><span class="s2">&quot;,&quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">constants</span><span class="o">.</span><span class="n">DEFAULT_START_CODONS</span><span class="p">)</span><span class="si">}</span><span class="s1">).&#39;</span><span class="p">)</span>
+    <span class="n">codon_group</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s1">&#39;-stc&#39;</span><span class="p">,</span> <span class="s1">&#39;--stop-codons&#39;</span><span class="p">,</span> <span class="nb">type</span><span class="o">=</span><span class="nb">str</span><span class="p">,</span> <span class="n">default</span><span class="o">=</span><span class="n">constants</span><span class="o">.</span><span class="n">DEFAULT_STOP_CODONS</span><span class="p">,</span>
+                             <span class="n">help</span><span class="o">=</span><span class="sa">f</span><span class="s1">&#39;Stop codons (optional, default value </span><span class="si">{</span><span class="s2">&quot;,&quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">constants</span><span class="o">.</span><span class="n">DEFAULT_STOP_CODONS</span><span class="p">)</span><span class="si">}</span><span class="s1">).&#39;</span><span class="p">)</span>
+    <span class="n">codon_group</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s1">&#39;-min&#39;</span><span class="p">,</span> <span class="s1">&#39;--min-codon-length&#39;</span><span class="p">,</span> <span class="nb">type</span><span class="o">=</span><span class="nb">int</span><span class="p">,</span> <span class="n">default</span><span class="o">=</span><span class="n">constants</span><span class="o">.</span><span class="n">DEFAULT_MIN_CODON_LENGTH</span><span class="p">,</span>
+                             <span class="n">help</span><span class="o">=</span><span class="sa">f</span><span class="s1">&#39;Minimum codon length for called ORFs (optional, default value </span><span class="si">{</span><span class="n">constants</span><span class="o">.</span><span class="n">DEFAULT_MIN_CODON_LENGTH</span><span class="si">}</span><span class="s1">).&#39;</span><span class="p">)</span>
+    <span class="n">codon_group</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s1">&#39;-max&#39;</span><span class="p">,</span> <span class="s1">&#39;--max-codon-length&#39;</span><span class="p">,</span> <span class="nb">type</span><span class="o">=</span><span class="nb">int</span><span class="p">,</span> <span class="n">default</span><span class="o">=</span><span class="n">constants</span><span class="o">.</span><span class="n">DEFAULT_MAX_CODON_LENGTH</span><span class="p">,</span>
+                             <span class="n">help</span><span class="o">=</span><span class="sa">f</span><span class="s1">&#39;Maximum codon length for called ORFs (optional, default value </span><span class="si">{</span><span class="n">constants</span><span class="o">.</span><span class="n">DEFAULT_MAX_CODON_LENGTH</span><span class="si">}</span><span class="s1">).&#39;</span><span class="p">)</span>
+
+    <span class="n">annotation_group</span> <span class="o">=</span> <span class="n">parser</span><span class="o">.</span><span class="n">add_argument_group</span><span class="p">(</span><span class="s1">&#39;Annotation settings&#39;</span><span class="p">)</span>
+    <span class="n">annotation_group</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s1">&#39;-sa&#39;</span><span class="p">,</span> <span class="s1">&#39;--skip-annotation&#39;</span><span class="p">,</span> <span class="n">action</span><span class="o">=</span><span class="s1">&#39;store_true&#39;</span><span class="p">,</span>
+                                  <span class="n">help</span><span class="o">=</span><span class="s1">&#39;Skip annotation of ORFs, just call them.&#39;</span><span class="p">)</span>
+    <span class="n">annotation_group</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s1">&#39;-g&#39;</span><span class="p">,</span> <span class="s1">&#39;--gwas-associations-fpath&#39;</span><span class="p">,</span> <span class="nb">type</span><span class="o">=</span><span class="nb">str</span><span class="p">,</span> <span class="n">required</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+                                  <span class="n">help</span><span class="o">=</span><span class="s1">&#39;Path to a TSV file containing SNP associations (in the format of NHGRI-EBI)&#39;</span><span class="p">)</span>
+    <span class="n">annotation_group</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s1">&#39;-p&#39;</span><span class="p">,</span> <span class="s1">&#39;--phylocsf-globs&#39;</span><span class="p">,</span> <span class="nb">type</span><span class="o">=</span><span class="nb">str</span><span class="p">,</span> <span class="n">nargs</span><span class="o">=</span><span class="s1">&#39;+&#39;</span><span class="p">,</span> <span class="n">required</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+                                  <span class="n">default</span><span class="o">=</span><span class="p">[],</span>
+                                  <span class="n">help</span><span class="o">=</span><span class="s1">&#39;Glob patterns for files containing phylocsf bigwig tracks for 3 frames on both strands.&#39;</span><span class="p">)</span>
+    <span class="n">annotation_group</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s1">&#39;-pn&#39;</span><span class="p">,</span> <span class="s1">&#39;--phylocsf-trackset-names&#39;</span><span class="p">,</span> <span class="nb">type</span><span class="o">=</span><span class="nb">str</span><span class="p">,</span> <span class="n">nargs</span><span class="o">=</span><span class="s1">&#39;+&#39;</span><span class="p">,</span> <span class="n">required</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+                                  <span class="n">default</span><span class="o">=</span><span class="p">[],</span>
+                                  <span class="n">help</span><span class="o">=</span><span class="s1">&#39;Names for the phylocsf tracksets. Will be prepended to the names of the summary stats.&#39;</span><span class="p">)</span>
+    <span class="c1"># Group: Advanced settings</span>
+    <span class="n">advanced_group</span> <span class="o">=</span> <span class="n">parser</span><span class="o">.</span><span class="n">add_argument_group</span><span class="p">(</span><span class="s1">&#39;Advanced settings&#39;</span><span class="p">)</span>
+
+    <span class="n">advanced_group</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s1">&#39;-np&#39;</span><span class="p">,</span> <span class="s1">&#39;--num-processes&#39;</span><span class="p">,</span> <span class="nb">type</span><span class="o">=</span><span class="nb">int</span><span class="p">,</span> <span class="n">default</span><span class="o">=</span><span class="n">constants</span><span class="o">.</span><span class="n">DEFAULT_NUM_PROCESSES</span><span class="p">,</span>
+                                <span class="n">help</span><span class="o">=</span><span class="s1">&#39;Number of simultaneous processes to run (optional, default to the max available).&#39;</span><span class="p">)</span>
+    <span class="n">advanced_group</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s1">&#39;-tc&#39;</span><span class="p">,</span> <span class="s1">&#39;--transcript-chunk-size&#39;</span><span class="p">,</span> <span class="nb">type</span><span class="o">=</span><span class="nb">int</span><span class="p">,</span>
+                                <span class="n">default</span><span class="o">=</span><span class="n">constants</span><span class="o">.</span><span class="n">DEFAULT_TRANSCRIPT_CHUNK_SIZE</span><span class="p">,</span>
+                                <span class="n">help</span><span class="o">=</span><span class="sa">f</span><span class="s1">&#39;The size of transcript chunks for processing (optional, default value </span><span class="si">{</span><span class="n">constants</span><span class="o">.</span><span class="n">DEFAULT_TRANSCRIPT_CHUNK_SIZE</span><span class="si">}</span><span class="s1">).&#39;</span><span class="p">)</span>
+    <span class="n">advanced_group</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s1">&#39;-ps&#39;</span><span class="p">,</span> <span class="s1">&#39;--phase-style&#39;</span><span class="p">,</span> <span class="nb">type</span><span class="o">=</span><span class="nb">str</span><span class="p">,</span>
+                                <span class="n">default</span><span class="o">=</span><span class="n">constants</span><span class="o">.</span><span class="n">DEFAULT_PHASE_STYLE</span><span class="p">,</span>
+                                <span class="n">help</span><span class="o">=</span><span class="s1">&#39;The phase style to use for CDSs. Can be &quot;gencode&quot; or &quot;ensembl&quot;.&#39;</span><span class="p">)</span>
+    <span class="n">advanced_group</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s1">&#39;-an&#39;</span><span class="p">,</span> <span class="s1">&#39;--accession-namespace&#39;</span><span class="p">,</span> <span class="nb">type</span><span class="o">=</span><span class="nb">str</span><span class="p">,</span> <span class="n">default</span><span class="o">=</span><span class="n">constants</span><span class="o">.</span><span class="n">DEFAULT_ACCESSION_NAMESPACE</span><span class="p">,</span>
+                                <span class="n">help</span><span class="o">=</span><span class="sa">f</span><span class="s1">&#39;The accession namespace for the genome sequences. Typical values are &quot;ensembl&quot;, &quot;genbank&quot; (optional, default value &quot;</span><span class="si">{</span><span class="n">constants</span><span class="o">.</span><span class="n">DEFAULT_ACCESSION_NAMESPACE</span><span class="si">}</span><span class="s1">&quot;).&#39;</span><span class="p">)</span>
+    <span class="n">advanced_group</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s1">&#39;-mc&#39;</span><span class="p">,</span> <span class="s1">&#39;--max-chunks&#39;</span><span class="p">,</span> <span class="nb">type</span><span class="o">=</span><span class="nb">int</span><span class="p">,</span> <span class="n">default</span><span class="o">=-</span><span class="mi">1</span><span class="p">,</span>
+                                <span class="n">help</span><span class="o">=</span><span class="s1">&#39;Maximum number of transcript chunks to process. Useful to launch small runs for debugging purposes. If not specified, all transcript chunks will be processed.&#39;</span><span class="p">)</span>
+    <span class="n">args</span> <span class="o">=</span> <span class="n">parser</span><span class="o">.</span><span class="n">parse_args</span><span class="p">()</span>
+
+    <span class="k">return</span> <span class="n">args</span></div>
+
+
+
+<div class="viewcode-block" id="bump_version">
+<a class="viewcode-back" href="../../../modules/bigprot.html#orfdb.bigprot.find_orfs.bump_version">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">bump_version</span><span class="p">(</span><span class="n">version</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Bumps the patch version by 1 for a semantic version string (e.g., v0.9.3 -&gt; v0.9.4).</span>
+<span class="sd">    </span>
+<span class="sd">    Args:</span>
+<span class="sd">        version (str): The version string to bump (e.g., &#39;v0.9.3&#39;).</span>
+<span class="sd">    </span>
+<span class="sd">    Returns:</span>
+<span class="sd">        str: The bumped version string.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="c1"># Match versions like v0.9.3</span>
+    <span class="n">match</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">match</span><span class="p">(</span><span class="sa">r</span><span class="s2">&quot;^(v?)(\d+)\.(\d+)\.(\d+)$&quot;</span><span class="p">,</span> <span class="n">version</span><span class="p">)</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">match</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Invalid version format: </span><span class="si">{</span><span class="n">version</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    
+    <span class="n">prefix</span><span class="p">,</span> <span class="n">major</span><span class="p">,</span> <span class="n">minor</span><span class="p">,</span> <span class="n">patch</span> <span class="o">=</span> <span class="n">match</span><span class="o">.</span><span class="n">groups</span><span class="p">()</span>
+    <span class="c1"># Increment the patch number</span>
+    <span class="n">bumped_version</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">prefix</span><span class="si">}{</span><span class="n">major</span><span class="si">}</span><span class="s2">.</span><span class="si">{</span><span class="n">minor</span><span class="si">}</span><span class="s2">.</span><span class="si">{</span><span class="nb">int</span><span class="p">(</span><span class="n">patch</span><span class="p">)</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="mi">1</span><span class="si">}</span><span class="s2">&quot;</span>
+    <span class="k">return</span> <span class="n">bumped_version</span></div>
+
+
+
+<div class="viewcode-block" id="perform_analysis">
+<a class="viewcode-back" href="../../../modules/bigprot.html#orfdb.bigprot.find_orfs.perform_analysis">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">perform_analysis</span><span class="p">(</span><span class="n">output</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+                     <span class="n">dataset_name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+                     <span class="n">genome_fasta_fpath</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+                     <span class="n">db_settings_fpath</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+                     <span class="n">skip_annotation</span><span class="p">:</span> <span class="nb">bool</span><span class="p">,</span>
+                     <span class="n">min_codon_length</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+                     <span class="n">max_codon_length</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+                     <span class="n">transcript_chunk_size</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+                     <span class="n">max_chunks</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+                     <span class="n">num_processes</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+                     <span class="n">verbose</span><span class="p">:</span> <span class="nb">bool</span><span class="p">,</span>
+                     <span class="n">accession_namespace</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+                     <span class="n">phase_style</span><span class="o">=</span><span class="n">constants</span><span class="o">.</span><span class="n">DEFAULT_PHASE_STYLE</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Conducts the analysis by loading and processing the specified datasets. This includes identifying and optionally annotating Open Reading Frames (ORFs), handling genomic sequences, and analyzing SNP associations along with PhyloCSF bigwig tracks for evolutionary conservation insights.</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        output (str): The directory path where output files will be saved.</span>
+<span class="sd">        dataset_name (str): The name identifying the dataset being analyzed.</span>
+<span class="sd">        genome_fasta_fpath (str): The file path to the FASTA file containing genomic sequences.</span>
+<span class="sd">        db_settings_fpath (str): The file path to the database settings file (settings.ini) with configuration details.</span>
+<span class="sd">        min_codon_length (int): The minimum codon length for identifying ORFs.</span>
+<span class="sd">        max_codon_length (int): The maximum codon length for identifying ORFs.</span>
+<span class="sd">        transcript_chunk_size (int): The size of chunks into which transcripts are divided for processing.</span>
+<span class="sd">        max_chunks (int): The maximum number of transcript chunks to process, useful for debugging or limited runs.</span>
+<span class="sd">        num_processes (int): The number of processes to run concurrently during the analysis.</span>
+<span class="sd">        verbose (bool): If true, enables verbose logging for more detailed execution logs.</span>
+<span class="sd">        skip_annotation (bool): If true, skips the annotation of ORFs, focusing only on their identification.</span>
+<span class="sd">        phase_style (str): The phase style to be used for CDSs, indicating the coding sequence phase convention (&#39;gencode&#39; or &#39;ensembl&#39;).</span>
+<span class="sd">        accession_namespace (str): The namespace for the accession numbers of the genome sequences.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">os</span><span class="o">.</span><span class="n">makedirs</span><span class="p">(</span><span class="n">output</span><span class="p">,</span> <span class="n">exist_ok</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="n">output_prefix</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">output</span><span class="p">,</span>
+                                 <span class="sa">f</span><span class="s1">&#39;orfset_</span><span class="si">{</span><span class="n">dataset_name</span><span class="si">}</span><span class="s1">_minlen_</span><span class="si">{</span><span class="n">min_codon_length</span><span class="si">}</span><span class="s1">_maxlen_</span><span class="si">{</span><span class="n">max_codon_length</span><span class="si">}</span><span class="s1">&#39;</span><span class="p">)</span>
+    <span class="n">log_file_fpath</span> <span class="o">=</span> <span class="sa">f</span><span class="s1">&#39;</span><span class="si">{</span><span class="n">output_prefix</span><span class="si">}</span><span class="s1">.find_orfs.log&#39;</span>
+
+    <span class="k">if</span> <span class="n">verbose</span><span class="p">:</span>
+        <span class="n">setup_logger</span><span class="p">(</span><span class="n">log_fpath</span><span class="o">=</span><span class="n">log_file_fpath</span><span class="p">,</span>
+                     <span class="n">verbosity</span><span class="o">=</span><span class="n">logging</span><span class="o">.</span><span class="n">DEBUG</span><span class="p">)</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="n">setup_logger</span><span class="p">(</span><span class="n">log_fpath</span><span class="o">=</span><span class="n">log_file_fpath</span><span class="p">,</span>
+                     <span class="n">verbosity</span><span class="o">=</span><span class="n">logging</span><span class="o">.</span><span class="n">INFO</span><span class="p">)</span>
+
+
+    <span class="n">version</span> <span class="o">=</span> <span class="n">settings</span><span class="o">.</span><span class="n">bigprot_version</span>
+    <span class="n">version</span> <span class="o">=</span> <span class="n">bump_version</span><span class="p">(</span><span class="n">version</span><span class="p">)</span>
+
+    <span class="c1"># Log the function arguments</span>
+    <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Calling and annotating ORFs using big_prot version </span><span class="si">{</span><span class="n">version</span><span class="si">}</span><span class="s2"> with the following arguments: &quot;</span>
+                <span class="sa">f</span><span class="s2">&quot;output=</span><span class="si">{</span><span class="n">output</span><span class="si">}</span><span class="s2">, dataset_name=</span><span class="si">{</span><span class="n">dataset_name</span><span class="si">}</span><span class="s2">, genome_fasta_fpath=</span><span class="si">{</span><span class="n">genome_fasta_fpath</span><span class="si">}</span><span class="s2">, &quot;</span>
+                <span class="sa">f</span><span class="s2">&quot;settings=</span><span class="si">{</span><span class="n">db_settings_fpath</span><span class="si">}</span><span class="s2">, &quot;</span>
+                <span class="sa">f</span><span class="s2">&quot;min_codon_length=</span><span class="si">{</span><span class="n">min_codon_length</span><span class="si">}</span><span class="s2">, max_codon_length=</span><span class="si">{</span><span class="n">max_codon_length</span><span class="si">}</span><span class="s2">, &quot;</span>
+                <span class="sa">f</span><span class="s2">&quot;transcript_chunk_size=</span><span class="si">{</span><span class="n">transcript_chunk_size</span><span class="si">}</span><span class="s2">, max_chunks=</span><span class="si">{</span><span class="n">max_chunks</span><span class="si">}</span><span class="s2">, num_processes=</span><span class="si">{</span><span class="n">num_processes</span><span class="si">}</span><span class="s2">, &quot;</span>
+                <span class="sa">f</span><span class="s2">&quot;verbose=</span><span class="si">{</span><span class="n">verbose</span><span class="si">}</span><span class="s2">, skip_annotation=</span><span class="si">{</span><span class="n">skip_annotation</span><span class="si">}</span><span class="s2">, phase_style=</span><span class="si">{</span><span class="n">phase_style</span><span class="si">}</span><span class="s2">, &quot;</span>
+                <span class="sa">f</span><span class="s2">&quot;accession_namespace=</span><span class="si">{</span><span class="n">accession_namespace</span><span class="si">}</span><span class="s2">.&quot;</span><span class="p">)</span>
+
+
+    <span class="c1"># Load the genome as a dictionary of Bio.SeqRecord objects keyed by accession. ToDo: Standardize on either SeqRecords or strings for sequences!</span>
+    <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;Loading genome sequences from </span><span class="si">{</span><span class="n">genome_fasta_fpath</span><span class="si">}</span><span class="s1"> ...&#39;</span><span class="p">)</span>
+    <span class="k">with</span> <span class="n">gzip</span><span class="o">.</span><span class="n">open</span><span class="p">(</span><span class="n">genome_fasta_fpath</span><span class="p">,</span> <span class="s1">&#39;rt&#39;</span><span class="p">)</span> <span class="k">as</span> <span class="n">fasta_file</span><span class="p">:</span>
+        <span class="n">genome</span> <span class="o">=</span> <span class="p">{</span><span class="n">seq_record</span><span class="o">.</span><span class="n">id</span><span class="p">:</span> <span class="nb">str</span><span class="p">(</span><span class="n">seq_record</span><span class="o">.</span><span class="n">seq</span><span class="p">)</span><span class="o">.</span><span class="n">upper</span><span class="p">()</span> <span class="k">for</span> <span class="n">seq_record</span> <span class="ow">in</span> <span class="n">tqdm</span><span class="p">(</span>
+            <span class="n">Bio</span><span class="o">.</span><span class="n">SeqIO</span><span class="o">.</span><span class="n">parse</span><span class="p">(</span><span class="n">fasta_file</span><span class="p">,</span> <span class="nb">format</span><span class="o">=</span><span class="s1">&#39;fasta&#39;</span><span class="p">))}</span>
+    <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;Loaded </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">genome</span><span class="p">)</span><span class="si">}</span><span class="s1"> sequences.&#39;</span><span class="p">)</span>
+
+    <span class="n">exons_by_transcript</span> <span class="o">=</span> <span class="p">{}</span>
+    <span class="n">cdss_by_exon</span> <span class="o">=</span> <span class="p">{}</span>
+
+    <span class="k">if</span> <span class="n">db_settings_fpath</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s1">&#39;No DB settings file provided, skipping DB connection.&#39;</span><span class="p">)</span>
+        
+    <span class="k">else</span><span class="p">:</span>
+        <span class="c1"># Load database tables</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s1">&#39;Connecting to DB defined in settings file </span><span class="si">%s</span><span class="s1">&#39;</span><span class="p">,</span>
+                    <span class="n">db_settings_fpath</span><span class="p">)</span>
+        <span class="n">execute_veliadb_query</span> <span class="o">=</span> <span class="n">db_utils</span><span class="o">.</span><span class="n">make_veliadb_query_engine</span><span class="p">(</span>
+            <span class="n">db_settings_fpath</span><span class="p">)</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s1">&#39;Querying transcript table ...&#39;</span><span class="p">)</span>
+        <span class="n">transcripts</span> <span class="o">=</span> <span class="n">execute_veliadb_query</span><span class="p">(</span><span class="n">db_utils</span><span class="o">.</span><span class="n">TRANSCRIPT_QUERY</span><span class="p">)</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s1">&#39;Received </span><span class="si">%d</span><span class="s1"> transcripts.&#39;</span><span class="p">,</span> <span class="nb">len</span><span class="p">(</span><span class="n">transcripts</span><span class="p">))</span>
+        <span class="c1"># Turn into dictionary and remove PAR genes</span>
+        <span class="n">transcripts_by_id</span> <span class="o">=</span> <span class="n">db_utils</span><span class="o">.</span><span class="n">filter_transcript_dict</span><span class="p">(</span>
+            <span class="p">{</span><span class="nb">str</span><span class="p">(</span><span class="n">transcript</span><span class="p">[</span><span class="s1">&#39;transcript.id&#39;</span><span class="p">]):</span> <span class="n">transcript</span> <span class="k">for</span> <span class="n">transcript</span> <span class="ow">in</span> <span class="n">tqdm</span><span class="p">(</span><span class="n">transcripts</span><span class="p">)})</span>
+        <span class="k">del</span> <span class="n">transcripts</span>
+
+        <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s1">&#39;Querying exons ...&#39;</span><span class="p">)</span>
+
+        <span class="n">exon_count</span> <span class="o">=</span> <span class="mi">0</span>
+        <span class="k">for</span> <span class="n">exon</span> <span class="ow">in</span> <span class="n">tqdm</span><span class="p">(</span><span class="n">execute_veliadb_query</span><span class="p">(</span><span class="n">db_utils</span><span class="o">.</span><span class="n">EXON_QUERY</span><span class="p">)):</span>
+            <span class="n">exon_num</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">exon</span><span class="p">[</span><span class="s1">&#39;transcript_exon.exon_number&#39;</span><span class="p">])</span>
+            <span class="k">if</span> <span class="n">exon</span><span class="p">[</span><span class="s1">&#39;transcript_exon.transcript_id&#39;</span><span class="p">]</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">exons_by_transcript</span><span class="p">:</span>
+                <span class="n">exons_by_transcript</span><span class="p">[</span><span class="n">exon</span><span class="p">[</span><span class="s1">&#39;transcript_exon.transcript_id&#39;</span><span class="p">]]</span> <span class="o">=</span> <span class="p">{}</span>
+            <span class="k">if</span> <span class="n">exon_num</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">exons_by_transcript</span><span class="p">[</span><span class="n">exon</span><span class="p">[</span><span class="s1">&#39;transcript_exon.transcript_id&#39;</span><span class="p">]]:</span>
+                <span class="n">exons_by_transcript</span><span class="p">[</span><span class="n">exon</span><span class="p">[</span><span class="s1">&#39;transcript_exon.transcript_id&#39;</span><span class="p">]][</span><span class="n">exon_num</span><span class="p">]</span> <span class="o">=</span> <span class="p">[</span>
+                <span class="p">]</span>
+            <span class="n">exons_by_transcript</span><span class="p">[</span><span class="n">exon</span><span class="p">[</span><span class="s1">&#39;transcript_exon.transcript_id&#39;</span><span class="p">]][</span><span class="n">exon_num</span><span class="p">]</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
+                <span class="n">exon</span><span class="p">)</span>
+            <span class="n">exon_count</span> <span class="o">+=</span> <span class="mi">1</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s1">&#39;Received </span><span class="si">%d</span><span class="s1"> exons.&#39;</span><span class="p">,</span> <span class="n">exon_count</span><span class="p">)</span>
+
+        <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s1">&#39;Querying CDSs ...&#39;</span><span class="p">)</span>
+        <span class="n">cds_count</span> <span class="o">=</span> <span class="mi">0</span>
+        <span class="k">for</span> <span class="n">cds</span> <span class="ow">in</span> <span class="n">tqdm</span><span class="p">(</span><span class="n">execute_veliadb_query</span><span class="p">(</span><span class="n">db_utils</span><span class="o">.</span><span class="n">CDS_QUERY</span><span class="p">)):</span>
+            <span class="k">if</span> <span class="n">cds</span><span class="p">[</span><span class="s1">&#39;exon_cds.exon_id&#39;</span><span class="p">]</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">cdss_by_exon</span><span class="p">:</span>
+                <span class="n">cdss_by_exon</span><span class="p">[</span><span class="n">cds</span><span class="p">[</span><span class="s1">&#39;exon_cds.exon_id&#39;</span><span class="p">]]</span> <span class="o">=</span> <span class="p">[]</span>
+            <span class="n">cdss_by_exon</span><span class="p">[</span><span class="n">cds</span><span class="p">[</span><span class="s1">&#39;exon_cds.exon_id&#39;</span><span class="p">]]</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">cds</span><span class="p">)</span>
+            <span class="n">cds_count</span> <span class="o">+=</span> <span class="mi">1</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s1">&#39;Received </span><span class="si">%d</span><span class="s1"> CDSs.&#39;</span><span class="p">,</span> <span class="n">cds_count</span><span class="p">)</span>
+
+    <span class="n">orf_calling</span><span class="o">.</span><span class="n">call_and_annotate_orfs</span><span class="p">(</span><span class="n">transcripts_by_id</span><span class="o">=</span><span class="n">transcripts_by_id</span><span class="p">,</span>
+                                       <span class="n">genome</span><span class="o">=</span><span class="n">genome</span><span class="p">,</span>
+                                       <span class="n">output_prefix</span><span class="o">=</span><span class="n">output_prefix</span><span class="p">,</span>
+                                       <span class="n">exons_by_transcript</span><span class="o">=</span><span class="n">exons_by_transcript</span><span class="p">,</span>
+                                       <span class="n">cdss_by_exon</span><span class="o">=</span><span class="n">cdss_by_exon</span><span class="p">,</span>
+                                       <span class="n">skip_annotation</span><span class="o">=</span><span class="n">skip_annotation</span><span class="p">,</span>
+                                       <span class="n">min_codon_length</span><span class="o">=</span><span class="n">min_codon_length</span><span class="p">,</span>
+                                       <span class="n">max_codon_length</span><span class="o">=</span><span class="n">max_codon_length</span><span class="p">,</span>
+                                       <span class="n">phase_style</span><span class="o">=</span><span class="n">phase_style</span><span class="p">,</span>
+                                       <span class="n">accession_namespace</span><span class="o">=</span><span class="n">accession_namespace</span><span class="p">,</span>
+                                       <span class="n">transcript_chunk_size</span><span class="o">=</span><span class="n">transcript_chunk_size</span><span class="p">,</span>
+                                       <span class="n">max_chunks</span><span class="o">=</span><span class="n">max_chunks</span><span class="p">,</span>
+                                       <span class="n">num_processes</span><span class="o">=</span><span class="n">num_processes</span><span class="p">)</span></div>
+
+
+
+<div class="viewcode-block" id="main">
+<a class="viewcode-back" href="../../../modules/bigprot.html#orfdb.bigprot.find_orfs.main">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Main function to parse command line arguments, and initiate the analysis.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">args</span> <span class="o">=</span> <span class="n">setup_argparser</span><span class="p">()</span>
+
+    <span class="nb">print</span><span class="p">(</span><span class="n">args</span><span class="p">)</span>
+
+    <span class="n">perform_analysis</span><span class="p">(</span><span class="n">output</span><span class="o">=</span><span class="n">args</span><span class="o">.</span><span class="n">output</span><span class="p">,</span> <span class="n">verbose</span><span class="o">=</span><span class="n">args</span><span class="o">.</span><span class="n">verbose</span><span class="p">,</span> <span class="n">dataset_name</span><span class="o">=</span><span class="n">args</span><span class="o">.</span><span class="n">dataset_name</span><span class="p">,</span>
+                     <span class="n">genome_fasta_fpath</span><span class="o">=</span><span class="n">args</span><span class="o">.</span><span class="n">fasta_file</span><span class="p">,</span>
+                     <span class="n">db_settings_fpath</span><span class="o">=</span><span class="n">args</span><span class="o">.</span><span class="n">db_settings</span><span class="p">,</span>
+                     <span class="n">gtf_file_fpath</span><span class="o">=</span><span class="n">args</span><span class="o">.</span><span class="n">gtf_file</span><span class="p">,</span>
+                     <span class="n">skip_annotation</span><span class="o">=</span><span class="n">args</span><span class="o">.</span><span class="n">skip_annotation</span><span class="p">,</span>
+                     <span class="n">min_codon_length</span><span class="o">=</span><span class="n">args</span><span class="o">.</span><span class="n">min_codon_length</span><span class="p">,</span>
+                     <span class="n">max_codon_length</span><span class="o">=</span><span class="n">args</span><span class="o">.</span><span class="n">max_codon_length</span><span class="p">,</span>
+                     <span class="n">phase_style</span><span class="o">=</span><span class="n">args</span><span class="o">.</span><span class="n">phase_style</span><span class="p">,</span>
+                     <span class="n">accession_namespace</span><span class="o">=</span><span class="n">args</span><span class="o">.</span><span class="n">accession_namespace</span><span class="p">,</span>
+                     <span class="n">transcript_chunk_size</span><span class="o">=</span><span class="n">args</span><span class="o">.</span><span class="n">transcript_chunk_size</span><span class="p">,</span>
+                     <span class="n">max_chunks</span><span class="o">=</span><span class="n">args</span><span class="o">.</span><span class="n">max_chunks</span><span class="p">,</span>
+                     <span class="n">num_processes</span><span class="o">=</span><span class="n">args</span><span class="o">.</span><span class="n">num_processes</span><span class="p">)</span></div>
+
+
+
+<span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s1">&#39;__main__&#39;</span><span class="p">:</span>
+    <span class="n">sys</span><span class="o">.</span><span class="n">exit</span><span class="p">(</span><span class="n">main</span><span class="p">())</span>
+</pre></div>
+
+           </div>
+          </div>
+          <footer>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright 2024, orfdb developers.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>
