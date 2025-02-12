@@ -52,7 +52,7 @@ Note: Replace [FTP_URL] with the appropriate FTP locations for each file. The sp
 Before running the database loading scripts, ensure that the `settings.ini` file is properly configured. This file contains paths to the directories where the input files are located. Here is a brief overview of the configuration options:
 
 - **DATABASE**: Configure the database connection settings, including host, port, user, password, and database name.
-- **DATA**: Specify the directories containing the various annotation files, such as GENCODE, RefSeq, CHESS, and others.
+- **DATA**: Specify the filenames of the gff files downloaded above. These should all live in orfdb/data
 
 ## Running the Database Loading Script
 
