@@ -17,9 +17,7 @@ from sqlalchemy.orm import Session
 
 from orfdb import base, settings
 from orfdb import annotation_loading, annotation_updates
-from seqmap import genomic
 import orfdb.util as orf_utils
-import seqmap.utils as seq_utils
 from sqlalchemy_batch_inserts import enable_batch_inserting
 
 
@@ -62,7 +60,10 @@ def bump_version(version: str) -> str:
     Returns:
         str: The bumped version string.
     """
-    # Match versions like v0.9.3
+    
+    if version is None:
+        return 'v0.0.1'
+
     match = re.match(r"^(v?)(\d+)\.(\d+)\.(\d+)$", version)
     if not match:
         raise ValueError(f"Invalid version format: {version}")
@@ -99,22 +100,20 @@ def load_db(drop_all: bool) -> None:
     logging.info(f'Loading {settings.db_connection_string}')
 
     try:
-        logging.info('Load genome assembly')
-        load_genome_assembly(session, settings.genomes_directory)
-
+        logging.info('Loading genome assembly')
+        load_genome_assembly(session, settings.data_dir, settings.genome_assembly)
 
         logging.info('Loading GENCODE')
-        load_gencode_gff(session, settings.gencode_directory,
-                        settings.gencode_version)
+        load_gencode_gff(session, settings.data_dir, settings.gencode_gff, settings.gencode_refseq)
 
         logging.info('Loading RefSeq')
-        load_refseq_gff(session, settings.refseq_directory)
+        load_refseq_gff(session, settings.data_dir, settings.refseq_gff)
 
         logging.info('Loading CHESS')
-        load_chess_gff(session, settings.chess_directory)
+        load_chess_gff(session, settings.data_dir, settings.chess_gff)
 
         logging.info('Loading BigProt')
-        load_bigprot_tables(session, settings.bigprot_directory)
+        #load_bigprot_tables(session, settings.data_dir, settings.genome, settings.bigprot_version, new_run=False)
         
         session.commit()
 
@@ -126,7 +125,7 @@ def load_db(drop_all: bool) -> None:
         session.close()
 
 
-def load_genome_assembly(session, genome_dir):
+def load_genome_assembly(session, data_dir, genome_assembly_file):
     """
     Load genome assembly information into the database.
 
@@ -138,44 +137,50 @@ def load_genome_assembly(session, genome_dir):
         genome_dir (Path): Directory containing the genome assembly report file.
 
     The function expects the genome assembly report to be located at:
-    'hg38/GCF_000001405.40.assembly_report.txt.tsv' within the provided genome_dir.
+    'hg38/GCF_000001405.40.assembly_report.tsv' within the provided genome_dir.
     """
-    assembly_info = genome_dir.joinpath(
-        'hg38',
-        'GCF_000001405.40.assembly_report.txt.tsv'
-    )
+    assembly_info = data_dir.joinpath(genome_assembly_file)
+
+    column_names = [
+        'Sequence-Name', 
+        'Sequence-Role', 
+        'Assigned-Molecule',
+        'Assigned-Molecule-Location/Type', 
+        'GenBank-Accn', 
+        'Relationship', 
+        'RefSeq-Accn', 
+        'Assembly-Unit', 
+        'Sequence-Length', 
+        'UCSC-style-name'
+    ]
 
     assembly_df = pd.read_csv(
         assembly_info,
         sep='\t',
+        comment='#',
+        names=column_names
     )
 
-    logging.info('Loading genome assembly')
     annotation_loading.load_genome_assembly(
         session, assembly_df, assembly_info.stem)
 
 
-def load_gencode_gff(session, gencode_dir, version):
+def load_gencode_gff(session, data_dir, gencode_gff_file, gencode_refseq_file):
     """Load GENCODE annotations from GFF files.
 
     Args:
         session: SQLAlchemy session object
         gencode_dir (Path): Directory containing GENCODE files
-        version (str): GENCODE version (e.g., 'v42')
     """
 
-    gencode_gff = gencode_dir.joinpath(
-        version,
-        f'gencode.{version}.chr_patch_hapl_scaff.annotation.gff3.gz'
-    )
 
-    logging.info(f'Loading GENCODE {version} GFF')
+    logging.info(f'Loading GENCODE {gencode_gff_file} GFF')
 
     gff_df = pd.read_csv(
-        gencode_gff, 
+        data_dir.joinpath(gencode_gff_file), 
         sep='\t', 
         low_memory=False,
-        compression='gzip' if str(gencode_gff).endswith('.gz') else None,
+        compression='gzip' if str(gencode_gff_file).endswith('.gz') else None,
         comment='#',
         names=[
             'seqid', 'source', 'type', 'start', 'end', 
@@ -215,7 +220,7 @@ def load_gencode_gff(session, gencode_dir, version):
         name='ENSEMBL',
         description='Automated ENSEMBL/GENCODE annotations',
         type='dataset',
-        attrs={'version': version}
+        attrs={'version': gencode_gff_file.stem}
     )
     base.upsert(
         session,
@@ -223,7 +228,7 @@ def load_gencode_gff(session, gencode_dir, version):
         name='HAVANA',
         description='Manual ENSEMBL/GENCODE annotations',
         type='dataset',
-        attrs={'version': version}
+        attrs={'version': gencode_gff_file.stem}
     )
     base.upsert(
         session,
@@ -238,7 +243,7 @@ def load_gencode_gff(session, gencode_dir, version):
         name='HGNC_ID',
         description='HUGO Human gene nomenclature numeric gene IDs',
         type='dataset',
-        attrs={'version': version}
+        attrs={'version': gencode_gff_file.stem}
     )
     base.upsert(
         session,
@@ -246,7 +251,7 @@ def load_gencode_gff(session, gencode_dir, version):
         name='HGNC_SYMBOL',
         description='HUGO Human gene nomenclature symbols',
         type='dataset',
-        attrs={'version': version}
+        attrs={'version': gencode_gff_file.stem}
     )
 
     logging.info('Loading GENCODE genes')
@@ -257,7 +262,7 @@ def load_gencode_gff(session, gencode_dir, version):
 
     logging.info('Loading GENCODE transcripts')
     transcript_exon_map = annotation_loading.load_gencode_transcripts(
-        session, tx_gff_df, exon_gff_df, gencode_dir, version)
+        session, tx_gff_df, exon_gff_df, data_dir.joinpath(gencode_refseq_file))
 
     logging.info('Loading GENCODE transcript <-> exon relationships')
     annotation_loading.load_gencode_transcript_exons(
@@ -272,52 +277,7 @@ def load_gencode_gff(session, gencode_dir, version):
     logging.info('Loading GENCODE cds')
     annotation_loading.load_gencode_cds(session, cds_gff_df)
     
-    logging.info('Loading GENCODE ORFs')
-    #cds_orf_map = annotation_loading.load_gencode_orfs(
-    #    session, cds_gff_df, assembly_ids)
-    #annotation_loading.load_gencode_orf_cds(session, cds_orf_map)
-
-    # Load Ribo-seq ORFs
-    bed_cols = [
-        'chrom', 'chromStart', 'chromEnd', 'name', 'score',
-        'strand', 'thickStart', 'thickEnd', 'itemRgb',
-        'blockCount', 'blockSizes', 'chromStarts', 'name2',
-        'cdsStartStat', 'cdsEndStat', 'exonFrames', 'type',
-        'geneName', 'geneName2', 'geneType', 'transcript_biotype',
-        'sequence', 'all_transcript_ids', 'all_gene_ids',
-        'replicated', 'ref_studies'
-    ]
-
-    orf_bed_df = pd.read_csv(
-        gencode_dir.joinpath(version, 'Ribo-seq_ORFs.bed'),
-        names=bed_cols,
-        sep='\t'
-    )
-
-
-    logging.info('Loading GENCODE Riboseq ORFs')
-    #(transcript_exon_rb_map,
-    # transcript_orf_map,
-    # exon_cds_map,
-    # cds_orf_map) = annotation_loading.load_gencode_riboseq_orfs(
-    #    session, orf_bed_df, assembly_ids, genome_seq)
-
-    #annotation_loading.load_gencode_riboseq_orf_cds(session, cds_orf_map)
-
-    logging.info('Loading GENCODE transcript <-> exon relationships for '
-                'riboseq orfs')
-    #annotation_loading.load_gencode_riboseq_transcript_exons(
-    #    session, transcript_exon_rb_map)
-    
-    logging.info('Loading GENCODE transcript <-> ORF relationships')
-    #annotation_loading.load_gencode_riboseq_transcript_orfs(
-    #    session, transcript_orf_map)
-    #annotation_loading.load_gencode_transcript_orfs(
-    #    session, tx_gff_df, assembly_ids)
-
     logging.info('Loading GENCODE exon <-> cds relationships')
-    #annotation_loading.load_gencode_riboseq_exon_cds(
-    #     session, exon_cds_map)
     annotation_loading.load_gencode_exon_cds(
         session, cds_gff_df)
 
@@ -330,21 +290,21 @@ def load_gencode_gff(session, gencode_dir, version):
     del utr_three_gff_df
 
 
-def load_refseq_gff(session, refseq_dir):
+def load_refseq_gff(session, data_dir, refseq_gff_file):
     """Load RefSeq annotations from GFF files.
 
     Args:
         session: SQLAlchemy session object
         refseq_dir (Path): Directory containing RefSeq files
     """
-    refseq_gff = refseq_dir.joinpath(
-        'GCF_000001405.40_GRCh38.p14_genomic.gff.gz'
-    )
+
+    refseq_version = '.'.join(str(refseq_gff_file).split('.')[0:2])
+
     refseq_df = pd.read_csv(
-        refseq_gff,
+        data_dir.joinpath(refseq_gff_file),
         sep='\t',
         dtype={'HGNC_ID': str, 'entrez_gene_id': str},
-        compression='gzip' if str(refseq_gff).endswith('.gz') else None,
+        compression='gzip' if str(refseq_gff_file).endswith('.gz') else None,
         comment='#',
         names=[
             'seq_id', 'source', 'type', 'start', 'end', 'score', 'strand',
@@ -355,11 +315,7 @@ def load_refseq_gff(session, refseq_dir):
 
     assembly_ids = {}
     for assembly in session.query(base.Assembly).all():
-        if assembly.ucsc_style_name.startswith('chr') and \
-           len(assembly.ucsc_style_name) < 6:
-            assembly_ids[assembly.ucsc_style_name] = assembly.id
-        else:
-            assembly_ids[assembly.genbank_accession] = assembly.id
+        assembly_ids[assembly.refseq_accession] = assembly.id
 
     refseq_df['assembly_id'] = refseq_df['seq_id'].apply(
         lambda x: int(assembly_ids.get(x, -1))
@@ -381,7 +337,7 @@ def load_refseq_gff(session, refseq_dir):
         name="RefSeq",
         description="NCBI Genome Annotation from gff",
         type="dataset",
-        attrs={"version": "GCA_000001405.15_GRCh38"}
+        attrs={"version": refseq_version}
     )
 
     for source in set(refseq_df['source']):
@@ -391,10 +347,9 @@ def load_refseq_gff(session, refseq_dir):
             name=source,
             description='',
             type="dataset",
-            attrs={"version": "GCA_000001405.15_GRCh38"}
+            attrs={"version": refseq_version}
         )
 
-    
     # Load RefSeq components
     logging.info('Loading RefSeq genes')
     annotation_loading.load_refseq_genes(session, gene_gff_df)
@@ -414,18 +369,18 @@ def load_refseq_gff(session, refseq_dir):
     annotation_loading.load_refseq_cds(session, cds_gff_df)
 
 
-def load_chess_gff(session, chess_dir):
+def load_chess_gff(session, data_dir, chess_gff_file):
     """Load CHESS annotations from GFF files.
 
     Args:
         session: SQLAlchemy session object
         chess_dir (Path): Directory containing CHESS files
     """
-    chess_gff = chess_dir.joinpath('chess3.0.gff.gz')
+
     chess_df = pd.read_csv(
-        chess_gff,
+        data_dir.joinpath(chess_gff_file),
         sep='\t',
-        compression='gzip' if str(chess_gff).endswith('.gz') else None,
+        compression='gzip' if str(chess_gff_file).endswith('.gz') else None,
         low_memory=False,
         comment='#',
         names=[
@@ -496,15 +451,19 @@ def load_chess_gff(session, chess_dir):
     annotation_loading.load_chess_cds(session, cds_gff_df)
 
 
-def load_bigprot_tables(session, bigprot_dir, overwrite=False):
+def load_bigprot_tables(session, data_dir, genome_file, bigprot_version=None, new_run=False):
     """Load BigProt tables from the given directory.
 
     Args:
         session: SQLAlchemy session object
         bigprot_dir (Path): Directory containing BigProt files
     """
-    bigprot_version = 'v0.9.5' #bump_version(settings.bigprot_version)
-    bigprot_dir = bigprot_dir.joinpath(bigprot_version)
+
+    if not new_run and bigprot_version:
+        return
+
+    bigprot_version = bump_version(bigprot_version)
+    bigprot_dir = data_dir.joinpath('bigprot', bigprot_version)
 
     required_files = [
         f'orfset_BigProt_minlen_15_maxlen_999999999_orfs.csv.gz',
@@ -517,34 +476,27 @@ def load_bigprot_tables(session, bigprot_dir, overwrite=False):
         for filename in required_files
     )
 
-
-    print([bigprot_dir.joinpath(filename) 
-        for filename in required_files])
-    print(files_exist)
     if not files_exist:
         logging.info('BigProt analysis files missing, running analysis...')
-        #try:
-        from orfdb.bigprot.find_orfs import perform_analysis
-        perform_analysis(
-            output=str(bigprot_dir),
-            verbose=False,
-            dataset_name='BigProt',
-            genome_fasta_fpath=str(settings.genomes_directory.joinpath(
-                'hg38', 'GCA_000001405.28_GRCh38.p13_genomic.fna.gz')),
-            db_settings_fpath=str(Path(__file__).parent.parent / 'settings.ini'),
-            #gtf_file_fpath=str(settings.gencode_directory.joinpath(
-            #    'v42', 'gencode.v42.chr_patch_hapl_scaff.annotation.expanded.gff3')),
-            min_codon_length=15,
-            max_codon_length=999999999,
-            skip_annotation=True,
-            transcript_chunk_size=1000,
-            max_chunks=1000,
-            num_processes=10,
-            accession_namespace='genbank',
-        )
-        #except Exception as e:
-        #    logging.error(f'Failed to run BigProt analysis: {str(e)}')
-       #     return
+        try:
+            from orfdb.bigprot.find_orfs import perform_analysis
+            perform_analysis(
+                output=str(bigprot_dir),
+                verbose=False,
+                dataset_name='BigProt',
+                genome_fasta_fpath=str(data_dir.joinpath(genome_file)),
+                db_settings_fpath=str(Path(__file__).parent.parent / 'settings.ini'),
+                min_codon_length=15,
+                max_codon_length=999999999,
+                skip_annotation=True,
+                transcript_chunk_size=1000,
+                max_chunks=1000,
+                num_processes=10,
+                accession_namespace='genbank',
+            )
+        except Exception as e:
+            logging.error(f'Failed to run BigProt analysis: {str(e)}')
+            return
     
     try:
         logging.info('Loading BigProt ORFs')
@@ -561,6 +513,40 @@ def load_bigprot_tables(session, bigprot_dir, overwrite=False):
         session.rollback()
         logging.error(f'Failed to load BigProt data: {str(e)}')
         raise
+
+
+def load_gencode_riboseq(session, gencode_riboseq_file):
+    """Load GENCODE Ribo-seq ORFs from a file.
+
+    Args:
+        session: SQLAlchemy session object
+        gencode_riboseq_file (Path): Path to the GENCODE Ribo-seq ORFs file
+    """
+
+    gencode_riboseq_file = settings.data_dir.joinpath(gencode_riboseq_file)
+
+    logging.info(f'Loading GENCODE Ribo-seq ORFs from {gencode_riboseq_file}')
+
+    # Load Ribo-seq ORFs
+    bed_cols = [
+        'chrom', 'chromStart', 'chromEnd', 'name', 'score',
+        'strand', 'thickStart', 'thickEnd', 'itemRgb',
+        'blockCount', 'blockSizes', 'chromStarts', 'name2',
+        'cdsStartStat', 'cdsEndStat', 'exonFrames', 'type',
+        'geneName', 'geneName2', 'geneType', 'transcript_biotype',
+        'sequence', 'all_transcript_ids', 'all_gene_ids',
+        'replicated', 'ref_studies'
+    ]
+
+    orf_bed_df = pd.read_csv(
+        settings.data_dir.joinpath(gencode_riboseq_file),
+        names=bed_cols,
+        sep='\t'
+    )
+
+    logging.info('Load annotation for GENCODE Riboseq ORFs')
+    annotation_loading.load_gencode_riboseq(session, orf_bed_df)
+
 
 
 if __name__ == '__main__':

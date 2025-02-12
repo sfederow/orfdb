@@ -27,7 +27,6 @@ setup(
         'click',
         'biopython',
         'sqlalchemy-batch-inserts',
-        'seqmap',
         'tqdm',
         'intervaltree',
     ],

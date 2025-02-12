@@ -53,40 +53,38 @@ def load_genome_assembly(session: Session, assembly_df: pd.DataFrame, assembly_n
         # Check if assembly exists
         stmt = select(base.Assembly).filter(
             or_(
-                base.Assembly.genbank_accession == row['GenBank seq accession'],
-                base.Assembly.refseq_accession == row['RefSeq seq accession']
+                base.Assembly.genbank_accession == row['GenBank-Accn'],
+                base.Assembly.refseq_accession == row['RefSeq-Accn']
             )
         )
         existing = session.execute(stmt).scalar_one_or_none()
 
         if existing:
             # Update existing assembly
-            existing.genbank_accession = row['GenBank seq accession']
-            existing.refseq_accession = row['RefSeq seq accession']
-            existing.ucsc_style_name = row['UCSC style name']
-            existing.sequence_role = row['Role']
-            existing.assembly_unit = row['Assembly-unit accession']
-            existing.assigned_molecule = row['Molecule type']
-            existing.sequence_length = int(row['Seq length'])
+            existing.genbank_accession = row['GenBank-Accn']
+            existing.refseq_accession = row['RefSeq-Accn']
+            existing.ucsc_style_name = row['UCSC-style-name']
+            existing.sequence_role = row['Sequence-Role']
+            existing.assembly_unit = row['Assembly-Unit']
+            existing.assigned_molecule = row['Assigned-Molecule']
+            existing.sequence_length = int(row['Sequence-Length'])
             existing.genome_accession = assembly_name
             existing.attrs = {
-                'sequence_name': row['Sequence name'],
-                'GC': str(row['GC Percent'])
+                'sequence_name': row['Sequence-Name'],
             }
         else:
             # Create new assembly
             assembly = base.Assembly(
-                genbank_accession=row['GenBank seq accession'],
-                refseq_accession=row['RefSeq seq accession'],
-                ucsc_style_name=row['UCSC style name'],
-                sequence_role=row['Role'],
-                assembly_unit=row['Assembly-unit accession'],
-                assigned_molecule=row['Molecule type'],
-                sequence_length=int(row['Seq length']),
+                genbank_accession=row['GenBank-Accn'],
+                refseq_accession=row['RefSeq-Accn'],
+                ucsc_style_name=row['UCSC-style-name'],
+                sequence_role=row['Sequence-Role'],
+                assembly_unit=row['Assembly-Unit'],
+                assigned_molecule=row['Assigned-Molecule'],
+                sequence_length=int(row['Sequence-Length']),
                 genome_accession=assembly_name,
                 attrs={
-                    'sequence_name': row['Sequence name'],
-                    'GC': str(row['GC Percent'])
+                    'sequence_name': row['Sequence-Name'],
                 }
             )
             assemblies_to_add.append(assembly)
@@ -320,8 +318,7 @@ def load_gencode_transcripts(
     session: Session, 
     tx_gff_df: pd.DataFrame, 
     exon_gff_df: pd.DataFrame, 
-    gencode_dir: Path,
-    version: str, 
+    gencode_refseq_file: Path,
 ) -> Dict[str, List[Tuple[int, int]]]:
     """Load transcripts from GENCODE GFF file.
 
@@ -383,10 +380,7 @@ def load_gencode_transcripts(
     # Load GENCODE-RefSeq mapping
     gencode_refseq_map = {}
     with gzip.open(
-        gencode_dir.joinpath(
-            version,
-            f'gencode.{version}.metadata.RefSeq.gz'
-        ), 'rt'
+        gencode_refseq_file, 'rt'
     ) as infile:
         for line in infile.readlines():
             vals = line.rstrip('\n').split('\t')
