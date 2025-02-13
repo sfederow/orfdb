@@ -75,6 +75,11 @@ except NoOptionError:
     raise Exception('genomes_assembly was not supplied in settings.ini')
 
 try:
+    self.genome = Path(config['DATA']['genome'])
+except NoOptionError:
+    raise Exception('genome was not supplied in settings.ini')
+
+try:
     self.refseq_gff = Path(config['DATA']['refseq_gff'])
 except NoOptionError:
     raise Exception('refseq_gff was not supplied in settings.ini')

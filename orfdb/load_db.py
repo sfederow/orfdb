@@ -12,12 +12,10 @@ from typing import Optional
 
 import click
 import pandas as pd
-from sqlalchemy import select
-from sqlalchemy.orm import Session
 
-from orfdb import base, settings
-from orfdb import annotation_loading, annotation_updates
-import orfdb.util as orf_utils
+from orfdb import base, settings, annotation_loading
+from orfdb.bigprot.find_orfs import perform_analysis
+
 from sqlalchemy_batch_inserts import enable_batch_inserting
 
 
@@ -101,19 +99,19 @@ def load_db(drop_all: bool) -> None:
 
     try:
         logging.info('Loading genome assembly')
-        load_genome_assembly(session, settings.data_dir, settings.genome_assembly)
+        #load_genome_assembly(session, settings.data_dir, settings.genome_assembly)
 
         logging.info('Loading GENCODE')
-        load_gencode_gff(session, settings.data_dir, settings.gencode_gff, settings.gencode_refseq)
+        #load_gencode_gff(session, settings.data_dir, settings.gencode_gff, settings.gencode_refseq)
 
         logging.info('Loading RefSeq')
-        load_refseq_gff(session, settings.data_dir, settings.refseq_gff)
+        #load_refseq_gff(session, settings.data_dir, settings.refseq_gff)
 
         logging.info('Loading CHESS')
-        load_chess_gff(session, settings.data_dir, settings.chess_gff)
+        #load_chess_gff(session, settings.data_dir, settings.chess_gff)
 
         logging.info('Loading BigProt')
-        #load_bigprot_tables(session, settings.data_dir, settings.genome, settings.bigprot_version, new_run=False)
+        load_bigprot_tables(session, settings.data_dir, settings.genome, settings.bigprot_version, new_run=True)
         
         session.commit()
 
@@ -461,6 +459,11 @@ def load_bigprot_tables(session, data_dir, genome_file, bigprot_version=None, ne
 
     if not new_run and bigprot_version:
         return
+    
+    if not bigprot_version:
+        bigprot_version = 'v0.0.0'
+    else:
+        bigprot_version = str(bigprot_version.name)
 
     bigprot_version = bump_version(bigprot_version)
     bigprot_dir = data_dir.joinpath('bigprot', bigprot_version)
@@ -478,25 +481,24 @@ def load_bigprot_tables(session, data_dir, genome_file, bigprot_version=None, ne
 
     if not files_exist:
         logging.info('BigProt analysis files missing, running analysis...')
-        try:
-            from orfdb.bigprot.find_orfs import perform_analysis
-            perform_analysis(
-                output=str(bigprot_dir),
-                verbose=False,
-                dataset_name='BigProt',
-                genome_fasta_fpath=str(data_dir.joinpath(genome_file)),
-                db_settings_fpath=str(Path(__file__).parent.parent / 'settings.ini'),
-                min_codon_length=15,
-                max_codon_length=999999999,
-                skip_annotation=True,
-                transcript_chunk_size=1000,
-                max_chunks=1000,
-                num_processes=10,
-                accession_namespace='genbank',
-            )
-        except Exception as e:
-            logging.error(f'Failed to run BigProt analysis: {str(e)}')
-            return
+        #try:
+        perform_analysis(
+            output=str(bigprot_dir),
+            verbose=False,
+            dataset_name='BigProt',
+            genome_fasta_fpath=str(data_dir.joinpath(genome_file)),
+            db_settings_fpath=str(Path(__file__).parent.parent / 'settings.ini'),
+            min_codon_length=15,
+            max_codon_length=999999999,
+            skip_annotation=True,
+            transcript_chunk_size=1000,
+            max_chunks=1000,
+            num_processes=10,
+            accession_namespace='genbank',
+        )
+       # except Exception as e:
+       #     logging.error(f'Failed to run BigProt analysis: {str(e)}')
+       #     return
     
     try:
         logging.info('Loading BigProt ORFs')
