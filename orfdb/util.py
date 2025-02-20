@@ -87,8 +87,8 @@ def get_hgnc_id(row):
         str: The HGNC ID if found, empty string otherwise
     """
     hgnc_id = ''
-    if re.match('.*HGNC:HGNC:(\d+).*', row.Dbxref):
-        hgnc_id = re.match('.*HGNC:HGNC:(\d+).*', row.Dbxref).groups()[0]
+    if re.match(r".*HGNC:HGNC:(\d+).*", row.Dbxref):
+        hgnc_id = re.match(r".*HGNC:HGNC:(\d+).*", row.Dbxref).groups()[0]
     return hgnc_id
 
 

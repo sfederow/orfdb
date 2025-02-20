@@ -21,12 +21,38 @@ pip install orfdb/
 
 This will install the package and its dependencies, as well as set up the command line script `orfdb_load`.
 
+## Data Download
+
+Before running the database loading scripts, you'll need to download the required data files. Create a data directory and download the files as follows:
+
+```bash
+# Create data directory
+mkdir -p orfdb/data
+cd orfdb/data
+
+# Download GENCODE annotation files
+wget https://ftp.ebi.ac.uk/pub/databases/gencode/Gencode_human/release_47/gencode.v47.chr_patch_hapl_scaff.annotation.gff3.gz
+wget https://ftp.ebi.ac.uk/pub/databases/gencode/Gencode_human/release_47/gencode.v47.metadata.RefSeq.gz
+
+# Download RefSeq files
+wget https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/001/405/GCF_000001405.40_GRCh38.p14/GCF_000001405.40_GRCh38.p14_genomic.gff.gz
+
+# Download CHESS files
+wget https://github.com/chess-genome/chess/releases/download/v.3.1.3/chess3.1.3.GRCh38.gff.gz
+
+# Download genome files
+wget https://ftp.ncbi.nlm.nih.gov/genomes/all/GCA/000/001/405/GCA_000001405.29_GRCh38.p14/GCA_000001405.29_GRCh38.p14_genomic.fna.gz
+wget https://ftp.ncbi.nlm.nih.gov/genomes/all/GCA/000/001/405/GCA_000001405.29_GRCh38.p14/GCA_000001405.29_GRCh38.p14_assembly_report.txt
+```
+
+Note: Replace [FTP_URL] with the appropriate FTP locations for each file. The specific versions of these files may be updated over time, so check the respective sources for the latest versions.
+
 ## Configuration
 
 Before running the database loading scripts, ensure that the `settings.ini` file is properly configured. This file contains paths to the directories where the input files are located. Here is a brief overview of the configuration options:
 
 - **DATABASE**: Configure the database connection settings, including host, port, user, password, and database name.
-- **DATA**: Specify the directories containing the various annotation files, such as GENCODE, RefSeq, CHESS, and others.
+- **DATA**: Specify the filenames of the gff files downloaded above. These should all live in orfdb/data
 
 ## Running the Database Loading Script
 

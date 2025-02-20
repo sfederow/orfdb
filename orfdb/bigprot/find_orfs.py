@@ -131,27 +131,6 @@ def setup_argparser() -> argparse.Namespace:
     return args
 
 
-def bump_version(version: str) -> str:
-    """
-    Bumps the patch version by 1 for a semantic version string (e.g., v0.9.3 -> v0.9.4).
-    
-    Args:
-        version (str): The version string to bump (e.g., 'v0.9.3').
-    
-    Returns:
-        str: The bumped version string.
-    """
-    # Match versions like v0.9.3
-    match = re.match(r"^(v?)(\d+)\.(\d+)\.(\d+)$", version)
-    if not match:
-        raise ValueError(f"Invalid version format: {version}")
-    
-    prefix, major, minor, patch = match.groups()
-    # Increment the patch number
-    bumped_version = f"{prefix}{major}.{minor}.{int(patch) + 1}"
-    return bumped_version
-
-
 def perform_analysis(output: str,
                      dataset_name: str,
                      genome_fasta_fpath: str,
@@ -164,7 +143,8 @@ def perform_analysis(output: str,
                      num_processes: int,
                      verbose: bool,
                      accession_namespace: str,
-                     phase_style=constants.DEFAULT_PHASE_STYLE) -> None:
+                     phase_style=constants.DEFAULT_PHASE_STYLE,
+                     version: str = None) -> None:
     """
     Conducts the analysis by loading and processing the specified datasets. This includes identifying and optionally annotating Open Reading Frames (ORFs), handling genomic sequences, and analyzing SNP associations along with PhyloCSF bigwig tracks for evolutionary conservation insights.
 
@@ -196,8 +176,8 @@ def perform_analysis(output: str,
                      verbosity=logging.INFO)
 
 
-    version = settings.bigprot_version
-    version = bump_version(version)
+    #version = settings.bigprot_version.name
+    #version = bump_version(version)
 
     # Log the function arguments
     logger.info(f"Calling and annotating ORFs using big_prot version {version} with the following arguments: "

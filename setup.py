@@ -27,9 +27,9 @@ setup(
         'click',
         'biopython',
         'sqlalchemy-batch-inserts',
-        'seqmap',
         'tqdm',
         'intervaltree',
+        'pyBigWig'
     ],
     entry_points = {
         'console_scripts': ['orfdb_load=orfdb.load_db:load_db'],
